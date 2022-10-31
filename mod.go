@@ -19,6 +19,30 @@ func closed(conn redcon.Conn, err error) {
 	glog.Debug("closed", conn.RemoteAddr())
 }
 
+var commands []*Command
+
+// AddCommand -
+func AddCommand(cmd ...*Command) {
+	commands = append(commands, cmd...)
+}
+
+var tableAdd = Command{
+	Usage: "PC.TableAdd shema.table_name [bool load all data]",
+	// Desc:     " добавление таблицы <shema.table> в отслеживание ",
+	Name:     "PC.TableAdd",
+	Flags:    "admin write blocking",
+	FirstKey: 1, LastKey: 1, KeyStep: 1,
+	Arity: 3,
+	Action: func(conn redcon.Conn, cmd redcon.Command) int {
+		b, err := strconv.ParseBool(string(cmd.Args[3]))
+		if err != nil {
+			conn.WriteError(err.Error())
+			return 0
+		}
+		return 0
+	},
+}
+
 var mx sync.Mutex
 
 func handler(conn redcon.Conn, cmd redcon.Command) {
@@ -28,7 +52,6 @@ func handler(conn redcon.Conn, cmd redcon.Command) {
 	args := cmd.Args[1:]
 
 	switch strings.ToLower(command) {
-
 	case "pc.tableadd":
 		if len(args) != 2 {
 			conn.WriteError(fmt.Sprintf("ERR wrong number of arguments for `%s` command", strings.ToUpper(command)))

@@ -5,7 +5,7 @@ import (
 	"net/url"
 
 	"github.com/bendersilver/pgcache/replica"
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 	"github.com/tidwall/redcon"
 )
 
@@ -32,7 +32,13 @@ func New(pgURL string) (*PgCache, error) {
 	u.RawQuery = param.Encode()
 	cache.pgURL = u.String()
 
-	cache.db, err = sql.Open("sqlite3", ":memory:")
+	sql.Register("sqlite3_custom", &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+
+			return nil
+		},
+	})
+	cache.db, err = sql.Open("sqlite3_custom", ":memory:")
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +47,7 @@ func New(pgURL string) (*PgCache, error) {
 	cache.db.SetConnMaxLifetime(0)
 
 	cache.msgChan = make(chan *replica.Row)
-	err = replica.New(pgURL, cache.msgChan)
+	cache.cancel, err = replica.New(pgURL, cache.msgChan)
 	if err != nil {
 		return nil, err
 	}
@@ -63,4 +69,5 @@ func (pc *PgCache) startReplica() {
 // startReplica -
 func (pc *PgCache) startRedConn(addr string) {
 	pc.errChan <- redcon.ListenAndServe(addr, handler, accept, closed)
+	pc.cancel()
 }

@@ -13,6 +13,7 @@ const (
 	plugin   = "pgoutput"
 )
 
+// MessageType -
 type MessageType string
 
 const (
@@ -27,12 +28,11 @@ const (
 	Origin               = "Origin"
 )
 
-var ctx = context.Background()
-
 // replication -
 type replication struct {
 	pgURL string
 
+	ctx       context.Context
 	ch        chan *Row
 	conn      *pgconn.PgConn
 	lsn       pglogrepl.LSN
@@ -40,6 +40,7 @@ type replication struct {
 	mi        *pgtype.Map
 }
 
+// Col -
 type Col struct {
 	Name  string
 	UDT   string
@@ -47,6 +48,7 @@ type Col struct {
 	Value interface{}
 }
 
+// Row -
 type Row struct {
 	Type  MessageType
 	Shema string

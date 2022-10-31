@@ -9,6 +9,7 @@ import (
 
 	"github.com/bendersilver/pgcache/replica"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tidwall/redcon"
 )
 
 var ctx = context.Background()
@@ -22,6 +23,7 @@ type PgCache struct {
 	tables  map[string]*dbTable
 	msgChan chan *replica.Row
 	errChan chan error
+	cancel  context.CancelFunc
 }
 
 type dbTable struct {
@@ -34,6 +36,7 @@ type dbTable struct {
 	insert, update, delete, truncate, selectPK *sql.Stmt
 }
 
+// Get -
 func (pc *PgCache) Get(name, where string) ([]byte, error) {
 	table, ok := pc.tables[name]
 	if !ok {
@@ -69,6 +72,7 @@ func (pc *PgCache) Get(name, where string) ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// Blob -
 type Blob struct {
 	Byte []byte
 }
@@ -94,11 +98,13 @@ func (n Blob) MarshalJSON() ([]byte, error) {
 	return n.Byte, nil
 }
 
+// Boolean -
 type Boolean struct {
 	Bool  bool
 	Valid bool // Valid is true if Bool is not NULL
 }
 
+// Scan -
 func (n *Boolean) Scan(value interface{}) error {
 	switch v := value.(type) {
 	case int64:
@@ -173,11 +179,13 @@ func (n Numeric) MarshalJSON() ([]byte, error) {
 	return json.Marshal(n.Float64)
 }
 
+// Text -
 type Text struct {
 	String string
 	Valid  bool
 }
 
+// Scan -
 func (n *Text) Scan(value interface{}) (err error) {
 	switch v := value.(type) {
 	case string:
@@ -190,9 +198,44 @@ func (n *Text) Scan(value interface{}) (err error) {
 	return fmt.Errorf("invalid type %T for Text", value)
 }
 
+// MarshalJSON -
 func (n Text) MarshalJSON() ([]byte, error) {
 	if !n.Valid {
 		return []byte("null"), nil
 	}
 	return json.Marshal(n.String)
+}
+
+// CmdFlag - Flags for create command
+type CmdFlag string
+
+const (
+	// Admin - the command is an administrative command.
+	Admin CmdFlag = "admin"
+	// Blocking - the command may block the requesting client.
+	Blocking = "blocking"
+	// Readonly - the command doesn't modify data.
+	Readonly = "readonly"
+	// Write - the command may modify data.
+	Write = "write"
+)
+
+// CmdFunc -
+type CmdFunc func(conn redcon.Conn, cmd redcon.Command) int
+
+// Command -
+type Command struct {
+	Usage  string
+	Desc   string
+	Name   string //This is the command's name in lowercase.
+	Action CmdFunc
+	// Use BuildCommandFLags to generate this flags
+	// Arity is the number of arguments a command expects. It follows a simple pattern:
+
+	// A positive integer means a fixed number of arguments.
+	// A negative integer means a minimal number of arguments.
+	// Command arity always includes the command's name itself (and the subcommand when applicable).
+	Arity                      int
+	Flags                      string
+	FirstKey, LastKey, KeyStep int
 }

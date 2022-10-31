@@ -3,6 +3,7 @@ package replica
 import (
 	"fmt"
 
+	"github.com/bendersilver/glog"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -11,12 +12,14 @@ import (
 func (r *replication) handle(m *pgproto3.CopyData) error {
 	xld, err := pglogrepl.ParseXLogData(m.Data[1:])
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
 	r.lsn = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 
 	msg, err := pglogrepl.Parse(xld.WALData)
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
 	var row Row
@@ -28,24 +31,28 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 		row.Type = Insert
 		err := r.msgData(&row, msg.RelationID, msg.Tuple, nil)
 		if err != nil {
+			glog.Error(err)
 			return err
 		}
 	case *pglogrepl.UpdateMessage:
 		row.Type = Update
 		err := r.msgData(&row, msg.RelationID, msg.NewTuple, msg.OldTuple)
 		if err != nil {
+			glog.Error(err)
 			return err
 		}
 	case *pglogrepl.DeleteMessage:
 		row.Type = Delete
 		err := r.msgData(&row, msg.RelationID, nil, msg.OldTuple)
 		if err != nil {
+			glog.Error(err)
 			return err
 		}
 	case *pglogrepl.TruncateMessage:
 		row.Type = Truncate
 		err := r.msgData(&row, msg.RelationNum, nil, nil)
 		if err != nil {
+			glog.Error(err)
 			return err
 		}
 	case *pglogrepl.BeginMessage:
@@ -58,6 +65,7 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 		row.Type = Origin
 
 	}
+	glog.Noticef("%+v", row)
 	r.ch <- &row
 	return nil
 }
@@ -102,6 +110,7 @@ func (r *replication) decodeTuple(vals []*Col, rel *pglogrepl.RelationMessage, t
 			if ok {
 				c.Value, err = dt.Codec.DecodeValue(r.mi, rc.DataType, pgtype.TextFormatCode, col.Data)
 				if err != nil {
+					glog.Error(err)
 					return err
 				}
 			} else {

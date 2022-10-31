@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/bendersilver/glog"
@@ -16,10 +15,12 @@ import (
 
 var r replication
 
-func New(pgURL string, msgChan chan *Row) error {
+// New -
+func New(pgURL string, msgChan chan *Row) (cancel context.CancelFunc, err error) {
 	u, err := url.Parse(pgURL)
 	if err != nil {
-		return err
+		glog.Error(err)
+		return
 	}
 	param := url.Values{}
 	param.Add("sslmode", "require")
@@ -29,42 +30,63 @@ func New(pgURL string, msgChan chan *Row) error {
 
 	r.ch = msgChan
 	r.mi = pgtype.NewMap()
-	r.pgURL = pgURL
+	r.pgURL = u.String()
 	r.relations = make(map[uint32]*pglogrepl.RelationMessage)
+	r.ctx, cancel = context.WithCancel(context.Background())
 
-	r.conn, err = pgconn.Connect(ctx, u.String())
+	err = r.reconnect()
 	if err != nil {
-		return err
+		glog.Error(err)
+		return nil, err
 	}
-	return r.createPublication()
+	return cancel, r.createPublication()
 }
 
+// Start -
 func Start() error {
 	return r.run()
 }
 
+func (r *replication) reconnect() (err error) {
+	if r.conn == nil || r.conn.IsClosed() {
+		r.conn, err = pgconn.Connect(r.ctx, r.pgURL)
+	}
+	return
+}
+
 func (r *replication) run() error {
 
-	err := r.setLsn()
+	err := r.createSlot()
 	if err != nil {
-		return err
+		glog.Warning(err)
 	}
+	defer r.close()
 
-	err = r.createSlot()
+RECONN:
+	r.lsn = pglogrepl.LSN(0)
+	err = r.reconnect()
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
 
 	err = r.startReplication()
 	if err != nil {
+		glog.Error(err)
 		return err
 	}
 	timeout := time.Second * 10
 	nextStandbyMessageDeadline := time.Now().Add(timeout)
 	for {
+		select {
+		case <-r.ctx.Done():
+			return nil
+		default:
+		}
+
 		if time.Now().After(nextStandbyMessageDeadline) {
 			err = pglogrepl.SendStandbyStatusUpdate(
-				context.Background(),
+				r.ctx,
 				r.conn,
 				pglogrepl.StandbyStatusUpdate{
 					WALWritePosition: r.lsn,
@@ -72,6 +94,7 @@ func (r *replication) run() error {
 			)
 
 			if err != nil {
+				glog.Error(err)
 				return err
 			}
 			nextStandbyMessageDeadline = time.Now().Add(timeout)
@@ -85,7 +108,9 @@ func (r *replication) run() error {
 			if pgconn.Timeout(err) {
 				continue
 			}
-			return err
+			glog.Error(err)
+			time.Sleep(time.Second * 20)
+			goto RECONN
 		}
 
 		if rawMsg == nil {
@@ -93,6 +118,8 @@ func (r *replication) run() error {
 		}
 
 		if errMsg, ok := rawMsg.(*pgproto3.ErrorResponse); ok {
+			glog.Critical(errMsg)
+			// restart
 			return fmt.Errorf("received Postgres WAL error: %+v", errMsg)
 		}
 
@@ -106,6 +133,7 @@ func (r *replication) run() error {
 		case pglogrepl.PrimaryKeepaliveMessageByteID:
 			pkm, err := pglogrepl.ParsePrimaryKeepaliveMessage(msg.Data[1:])
 			if err != nil {
+				glog.Error(err)
 				return err
 			}
 			if pkm.ReplyRequested {
@@ -117,54 +145,50 @@ func (r *replication) run() error {
 	}
 }
 
-func (r *replication) readWithTimeout(timeout time.Duration) (pgproto3.BackendMessage, error) {
-	ctx, cancel := context.WithDeadline(ctx, time.Now().Add(timeout))
-	defer cancel()
-	rawMsg, err := r.conn.ReceiveMessage(ctx)
-	if err != nil {
-		if pgconn.Timeout(err) {
-			return nil, os.ErrDeadlineExceeded
-		}
-		return nil, err
-	}
-	return rawMsg, err
-}
-
-func (r *replication) createPublication() error {
+func (r *replication) dropPublication() error {
 	sql := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s;", slotName)
-	_, err := r.conn.Exec(ctx, sql).ReadAll()
-	if err != nil {
-		return err
-	}
-
-	sql = fmt.Sprintf("CREATE PUBLICATION %s;", slotName)
-	_, err = r.conn.Exec(ctx, sql).ReadAll()
+	_, err := r.conn.Exec(r.ctx, sql).ReadAll()
 	return err
 }
 
-func (r *replication) setLsn() error {
-	sysident, err := pglogrepl.IdentifySystem(ctx, r.conn)
+func (r *replication) createPublication() error {
+	err := r.dropPublication()
 	if err != nil {
 		return err
 	}
-	r.lsn = sysident.XLogPos
-	return nil
+	sql := fmt.Sprintf("CREATE PUBLICATION %s;", slotName)
+	_, err = r.conn.Exec(r.ctx, sql).ReadAll()
+	return err
 }
 
 func (r *replication) createSlot() error {
-	_, err := pglogrepl.CreateReplicationSlot(ctx,
+
+	_, err := pglogrepl.CreateReplicationSlot(r.ctx,
 		r.conn,
 		slotName,
 		plugin,
-		pglogrepl.CreateReplicationSlotOptions{
-			Temporary: true,
-		},
+		pglogrepl.CreateReplicationSlotOptions{},
 	)
 	return err
 }
 
+func (r *replication) close() {
+	err := pglogrepl.DropReplicationSlot(r.ctx, r.conn, slotName, pglogrepl.DropReplicationSlotOptions{})
+	if err != nil {
+		glog.Error(err)
+	}
+	err = r.dropPublication()
+	if err != nil {
+		glog.Error(err)
+	}
+	err = r.conn.Close(r.ctx)
+	if err != nil {
+		glog.Error(err)
+	}
+}
+
 func (r *replication) startReplication() error {
-	return pglogrepl.StartReplication(ctx,
+	return pglogrepl.StartReplication(r.ctx,
 		r.conn,
 		slotName,
 		r.lsn,
@@ -175,4 +199,14 @@ func (r *replication) startReplication() error {
 			},
 		},
 	)
+}
+
+func (r *replication) setLsn() error {
+	sysident, err := pglogrepl.IdentifySystem(r.ctx, r.conn)
+	if err != nil {
+		glog.Error(err)
+		return err
+	}
+	r.lsn = sysident.XLogPos
+	return nil
 }
