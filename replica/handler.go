@@ -65,7 +65,6 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 		row.Type = Origin
 
 	}
-	glog.Noticef("%+v", row)
 	r.ch <- &row
 	return nil
 }

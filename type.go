@@ -37,39 +37,111 @@ type dbTable struct {
 }
 
 // Get -
-func (pc *PgCache) Get(name, where string) ([]byte, error) {
+func (pc *PgCache) Query(name string, args ...[]byte) ([]map[string]interface{}, error) {
 	table, ok := pc.tables[name]
 	if !ok {
 		return nil, fmt.Errorf("no such table: %s", name)
 	}
-	var scan = make([]any, len(table.fldName))
-	var m = make(map[string]any)
-	for i, f := range table.fldDataType {
-		var col any
-		switch f.Name {
-		case "int2", "int4", "int8", "timestamp", "timestamptz", "date":
-			col = new(Integer)
-		case "numeric", "float4", "float8":
-			col = new(Numeric)
-		case "text", "varchar", "name":
-			col = new(Text)
-		case "bool":
-			col = new(Boolean)
-		default:
-			col = new(Blob)
+	var values []any
+	sql := fmt.Sprintf("SELECT * FROM %s", strings.ReplaceAll(name, ".", "_"))
+	if len(args) > 0 {
+		sql += fmt.Sprintf(" WHERE %s;", args[0])
+		for i, a := range args {
+			if i > 0 {
+				values = append(values, string(a))
+			}
 		}
-		scan[i] = col
-		m[table.fldName[i]] = col
+	} else {
+		sql += ";"
 	}
-	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s",
-		strings.ReplaceAll(name, ".", "_"),
-		where,
-	)
-	err := pc.db.QueryRow(sql).Scan(scan...)
+	var res []map[string]interface{}
+	rows, err := pc.db.Query(sql, values...)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(m)
+	defer rows.Close()
+
+	for rows.Next() {
+		var scan = make([]any, len(table.fldName))
+		var m = make(map[string]any)
+		for i, f := range table.fldDataType {
+			var col any
+			switch f.Name {
+			case "int2", "int4", "int8", "timestamp", "timestamptz", "date":
+				col = new(Integer)
+			case "numeric", "float4", "float8":
+				col = new(Numeric)
+			case "text", "varchar", "name":
+				col = new(Text)
+			case "bool":
+				col = new(Boolean)
+			default:
+				col = new(Blob)
+			}
+			scan[i] = col
+			m[table.fldName[i]] = col
+		}
+		err = rows.Scan(scan...)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	return res, rows.Err()
+}
+
+// Get -
+func (pc *PgCache) RawQuery(sql string, args ...[]byte) ([]map[string]interface{}, error) {
+	cmt, err := pc.db.Prepare(sql)
+	if err != nil {
+		return nil, err
+	}
+	defer cmt.Close()
+	var values []any
+	if len(args) > 0 {
+		sql += fmt.Sprintf(" WHERE %s;", args[0])
+		for i, a := range args {
+			if i > 0 {
+				values = append(values, string(a))
+			}
+		}
+	}
+	rows, err := cmt.Query(values...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, err
+	}
+	var res []map[string]interface{}
+	for rows.Next() {
+		var scan = make([]any, len(types))
+		var m = make(map[string]any)
+		for i, f := range types {
+			var col any
+			switch f.DatabaseTypeName() {
+			case "INTEGER":
+				col = new(Integer)
+			case "REAL":
+				col = new(Numeric)
+			case "TEXT":
+				col = new(Text)
+			default:
+				col = new(Blob)
+			}
+			scan[i] = col
+			m[f.Name()] = col
+		}
+		err = rows.Scan(scan...)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	return res, rows.Err()
 }
 
 // Blob -
@@ -187,11 +259,13 @@ type Text struct {
 
 // Scan -
 func (n *Text) Scan(value interface{}) (err error) {
-	switch v := value.(type) {
+	switch value := value.(type) {
 	case string:
-		n.String, n.Valid = v, true
+		n.String, n.Valid = value, true
 		return nil
-
+	case []byte:
+		n.String, n.Valid = string(value), true
+		return nil
 	case nil:
 		return nil
 	}
@@ -206,22 +280,8 @@ func (n Text) MarshalJSON() ([]byte, error) {
 	return json.Marshal(n.String)
 }
 
-// CmdFlag - Flags for create command
-type CmdFlag string
-
-const (
-	// Admin - the command is an administrative command.
-	Admin CmdFlag = "admin"
-	// Blocking - the command may block the requesting client.
-	Blocking = "blocking"
-	// Readonly - the command doesn't modify data.
-	Readonly = "readonly"
-	// Write - the command may modify data.
-	Write = "write"
-)
-
 // CmdFunc -
-type CmdFunc func(conn redcon.Conn, cmd redcon.Command) int
+type CmdFunc func(conn redcon.Conn, cmd redcon.Command) error
 
 // Command -
 type Command struct {

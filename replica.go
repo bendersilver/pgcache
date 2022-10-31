@@ -5,7 +5,7 @@ import (
 	"net/url"
 
 	"github.com/bendersilver/pgcache/replica"
-	"github.com/mattn/go-sqlite3"
+	sqlite "github.com/mattn/go-sqlite3"
 	"github.com/tidwall/redcon"
 )
 
@@ -32,8 +32,8 @@ func New(pgURL string) (*PgCache, error) {
 	u.RawQuery = param.Encode()
 	cache.pgURL = u.String()
 
-	sql.Register("sqlite3_custom", &sqlite3.SQLiteDriver{
-		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+	sql.Register("sqlite3_custom", &sqlite.SQLiteDriver{
+		ConnectHook: func(conn *sqlite.SQLiteConn) error {
 
 			return nil
 		},

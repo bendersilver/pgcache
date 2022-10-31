@@ -214,8 +214,9 @@ func converDataType(v interface{}, udt string) (interface{}, error) {
 		if v, ok := v.(time.Time); ok {
 			return v.UnixMicro(), nil
 		}
-	case "int2", "int4", "int8", "bool", "varchar", "numeric", "float4", "float8":
+	case "int2", "int4", "int8", "bool", "text", "varchar", "name", "numeric", "float4", "float8":
 		return v, nil
+
 	}
 	return json.Marshal(v)
 }
