@@ -1,0 +1,4 @@
+test_*.go
+.env
+build.bash
+
