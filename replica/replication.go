@@ -58,7 +58,6 @@ func Run(pgURL string) error {
 
 func (r *replication) reconnect() (err error) {
 	if r.conn == nil || r.conn.IsClosed() {
-		glog.Notice(r.pgURL)
 		r.conn, err = pgconn.Connect(ctx, r.pgURL)
 	}
 	return

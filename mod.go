@@ -11,12 +11,12 @@ import (
 )
 
 func accept(conn redcon.Conn) bool {
-	// glog.Debug("accept", conn.RemoteAddr())
+	glog.Debug("connect", conn.RemoteAddr())
 	return true
 }
 
 func closed(conn redcon.Conn, err error) {
-	// glog.Debug("closed", conn.RemoteAddr())
+	glog.Debug("conn close", conn.RemoteAddr())
 }
 
 var commands = make(map[string]*Command)
