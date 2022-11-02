@@ -160,7 +160,7 @@ func (r *replication) insert(msg *pglogrepl.InsertMessage) error {
 			names[ix] = col.Name
 			params[ix] = "?"
 		}
-		sql := fmt.Sprintf("INSERT INTO %s_%s(%s) VALUES (%s);",
+		sql := fmt.Sprintf("INSERT OR IGNORE INTO %s_%s(%s) VALUES (%s);",
 			rel.Namespace,
 			rel.RelationName,
 			strings.Join(names, " ,"),
