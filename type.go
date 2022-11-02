@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tidwall/redcon"
@@ -139,6 +140,10 @@ func (n *Text) Scan(value interface{}) (err error) {
 	case []byte:
 		n.String, n.Valid = string(value), true
 		return nil
+	case float64:
+		n.String, n.Valid = strconv.FormatFloat(value, 'f', -1, 64), true
+	case int64:
+		n.String, n.Valid = fmt.Sprintf("%d", value), true
 	case nil:
 		return nil
 	}
