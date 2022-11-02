@@ -14,7 +14,11 @@ func main() {
 	if err != nil {
 		glog.Fatal(err)
 	}
-	pgcache.AddCommand(&echo)
+	err = pgcache.AddCommand(&echo)
+	if err != nil {
+		glog.Fatal(err)
+	}
+
 	err = pc.AddTable(`pb.users`, true)
 	if err != nil {
 		glog.Fatal(err)
