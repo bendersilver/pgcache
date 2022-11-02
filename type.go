@@ -25,7 +25,7 @@ func (n *Blob) Scan(value interface{}) (err error) {
 	case []byte:
 		n.Byte = v
 		return nil
-	case float64, int64:
+	case float64, int64, string, bool:
 		n.Byte, err = json.Marshal(value)
 		return err
 
