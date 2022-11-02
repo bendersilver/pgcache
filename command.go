@@ -185,8 +185,8 @@ func init() {
 			},
 		},
 		&Command{
-			Usage:    "COMMAND",
-			Name:     "COMMAND",
+			Usage:    "CMD",
+			Name:     "CMD",
 			Flags:    "random loading stale",
 			FirstKey: 0, LastKey: 0, KeyStep: 0,
 			Arity: 1,
@@ -212,8 +212,8 @@ func init() {
 			},
 		},
 		&Command{
-			Usage:    "COMMAND.INFO",
-			Name:     "COMMAND.INFO",
+			Usage:    "CMD.INFO",
+			Name:     "CMD.INFO",
 			Flags:    "random loading stale",
 			FirstKey: 0, LastKey: 0, KeyStep: 0,
 			Arity: 1,
