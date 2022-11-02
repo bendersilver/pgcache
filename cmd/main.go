@@ -21,23 +21,6 @@ func main() {
 		glog.Fatal(err)
 	}
 	glog.Fatal(pgcache.Start(":6677"))
-	// err := replica.Run(os.Getenv("PG_URL"))
-	// if err != nil {
-	// 	glog.Fatal(err)
-	// }
-	// err = replica.TableAdd(`pb.users`, true)
-	// glog.Error(err)
-	// select {}
-	// pgcache.AddCommand(&echo)
-	// err = pc.AddTable(`pb.users`, true)
-	// if err != nil {
-	// 	glog.Fatal(err)
-	// }
-	// // glog.Debug("listen")
-	// err = pc.ListenAndServe(":6677")
-	// if err != nil {
-	// 	glog.Fatal(err)
-	// }
 }
 
 var echo = pgcache.Command{

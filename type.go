@@ -1,18 +1,18 @@
 package pgcache
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tidwall/redcon"
 )
 
-var ctx = context.Background()
-var mi = pgtype.NewMap()
-var db *sql.DB
+type DataType interface {
+	Scan(value any) error
+	MarshalJSON() ([]byte, error)
+	String() string
+}
 
 // Blob -
 type Blob struct {
@@ -33,6 +33,15 @@ func (n *Blob) Scan(value interface{}) (err error) {
 		return nil
 	}
 	return fmt.Errorf("invalid type %T for Blob", value)
+}
+
+// String -
+func (n *Blob) String() string {
+	if n.Byte == nil {
+		return "(nil)"
+	}
+	v, _ := strconv.Unquote(string(n.Byte))
+	return v
 }
 
 // MarshalJSON -
@@ -65,6 +74,17 @@ func (n *Boolean) Scan(value interface{}) error {
 	return fmt.Errorf("invalid type %T for Boolean", value)
 }
 
+// String -
+func (n *Boolean) String() string {
+	if !n.Valid {
+		return "(nil)"
+	}
+	if n.Bool {
+		return "true"
+	}
+	return "false"
+}
+
 // MarshalJSON - redis protocol response
 func (n Boolean) MarshalJSON() ([]byte, error) {
 	if !n.Valid {
@@ -90,6 +110,14 @@ func (n *Integer) Scan(value interface{}) error {
 		return nil
 	}
 	return fmt.Errorf("invalid type %T for integer", value)
+}
+
+// String -
+func (n *Integer) String() string {
+	if !n.Valid {
+		return "(nil)"
+	}
+	return fmt.Sprintf("%d", n.Int64)
 }
 
 // MarshalJSON -
@@ -119,6 +147,14 @@ func (n *Numeric) Scan(value interface{}) error {
 	return fmt.Errorf("invalid type %T for Numeric", value)
 }
 
+// String -
+func (n *Numeric) String() string {
+	if !n.Valid {
+		return "(nil)"
+	}
+	return fmt.Sprintf("%.10f", n.Float64)
+}
+
 // MarshalJSON - redis protocol response
 func (n Numeric) MarshalJSON() ([]byte, error) {
 	if !n.Valid {
@@ -129,23 +165,31 @@ func (n Numeric) MarshalJSON() ([]byte, error) {
 
 // Text -
 type Text struct {
-	String string
-	Valid  bool
+	Str   string
+	Valid bool
 }
 
 // Scan -
 func (n *Text) Scan(value interface{}) (err error) {
 	switch value := value.(type) {
 	case string:
-		n.String, n.Valid = value, true
+		n.Str, n.Valid = value, true
 		return nil
 	case []byte:
-		n.String, n.Valid = string(value), true
+		n.Str, n.Valid = string(value), true
 		return nil
 	case nil:
 		return nil
 	}
 	return fmt.Errorf("invalid type %T for Text", value)
+}
+
+// String -
+func (n *Text) String() string {
+	if !n.Valid {
+		return "(nil)"
+	}
+	return n.Str
 }
 
 // MarshalJSON -

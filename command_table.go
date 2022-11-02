@@ -1,9 +1,9 @@
 package pgcache
 
 import (
+	"fmt"
 	"strconv"
 
-	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache/replica"
 	"github.com/tidwall/redcon"
 )
@@ -14,18 +14,34 @@ func init() {
 			Usage:    "Table.Info shema.table_name",
 			Name:     "TABLE.INFO",
 			Flags:    "admin readonly blocking",
-			FirstKey: 1, LastKey: 0, KeyStep: 0,
+			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: 2,
 			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) != 3 {
+				if len(cmd.Args) != 2 {
 					return wrongArity
 				}
-				var create string
-				err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE name=?;`, string(cmd.Args[1])).Scan(&create)
+				arr, err := rawQuery(fmt.Sprintf(`PRAGMA table_info(%s);`, tableName(cmd.Args[1])))
 				if err != nil {
 					return err
 				}
-				conn.WriteString(create)
+				conn.WriteArray(len(arr))
+				for _, t := range arr {
+					var name, typ string
+					v, ok := t["name"]
+					if ok {
+						name = v.String()
+					}
+
+					v, ok = t["type"]
+					if ok {
+						typ = v.String()
+					}
+					v, ok = t["pk"]
+					if ok && v.String() == "1" {
+						typ = fmt.Sprintf("%-14sPRIMARY KEY", typ)
+					}
+					conn.WriteString(fmt.Sprintf("%-25s%s", name, typ))
+				}
 				return nil
 			},
 		},
@@ -36,34 +52,20 @@ func init() {
 			FirstKey: 0, LastKey: 0, KeyStep: 0,
 			Arity: 1,
 			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type ='table' AND name NOT LIKE 'sqlite_%';`)
+
+				arr, err := rawQuery(`
+						SELECT name
+						FROM sqlite_schema
+						WHERE type ='table'
+							AND name NOT LIKE 'sqlite_%';
+					`, nil)
 				if err != nil {
 					return err
 				}
-				defer rows.Close()
-
-				var items []string
-				for rows.Next() {
-					var item string
-					err = rows.Scan(&item)
-					if err != nil {
-						glog.Error(err)
-					}
-					items = append(items, item)
-
+				conn.WriteArray(len(arr))
+				for _, t := range arr {
+					conn.WriteString(t["name"].String())
 				}
-				if rows.Err() != nil {
-					return rows.Err()
-				}
-				if len(items) == 0 {
-					conn.WriteNull()
-					return nil
-				}
-				conn.WriteArray(len(items))
-				for _, t := range items {
-					conn.WriteString(t)
-				}
-
 				return nil
 			},
 		},
