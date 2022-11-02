@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tidwall/redcon"
@@ -21,11 +20,14 @@ type Blob struct {
 }
 
 // Scan -
-func (n *Blob) Scan(value interface{}) error {
+func (n *Blob) Scan(value interface{}) (err error) {
 	switch v := value.(type) {
 	case []byte:
 		n.Byte = v
 		return nil
+	case float64, int64:
+		n.Byte, err = json.Marshal(value)
+		return err
 
 	case nil:
 		return nil
@@ -139,12 +141,6 @@ func (n *Text) Scan(value interface{}) (err error) {
 		return nil
 	case []byte:
 		n.String, n.Valid = string(value), true
-		return nil
-	case float64:
-		n.String, n.Valid = strconv.FormatFloat(value, 'f', -1, 64), true
-		return nil
-	case int64:
-		n.String, n.Valid = fmt.Sprintf("%d", value), true
 		return nil
 	case nil:
 		return nil
