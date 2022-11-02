@@ -2,6 +2,7 @@ package replica
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/url"
 	"time"
@@ -10,17 +11,18 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
-	"github.com/jackc/pgx/v5/pgtype"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var r replication
+var ctx = context.Background()
 
-// New -
-func New(pgURL string, msgChan chan *Row) (cancel context.CancelFunc, err error) {
+// Run -
+func Run(pgURL string) error {
 	u, err := url.Parse(pgURL)
 	if err != nil {
 		glog.Error(err)
-		return
+		return err
 	}
 	param := url.Values{}
 	param.Add("sslmode", "require")
@@ -28,28 +30,36 @@ func New(pgURL string, msgChan chan *Row) (cancel context.CancelFunc, err error)
 	param.Add("application_name", "pgcache_slot")
 	u.RawQuery = param.Encode()
 
-	r.ch = msgChan
-	r.mi = pgtype.NewMap()
 	r.pgURL = u.String()
 	r.relations = make(map[uint32]*pglogrepl.RelationMessage)
-	r.ctx, cancel = context.WithCancel(context.Background())
+
+	r.db, err = sql.Open("sqlite3", "file:redispg?mode=memory&cache=shared&_auto_vacuum=1")
+	if err != nil {
+		glog.Error(err)
+		return err
+	}
+	r.db.SetMaxOpenConns(1)
+	r.db.SetConnMaxIdleTime(0)
+	r.db.SetConnMaxLifetime(0)
 
 	err = r.reconnect()
 	if err != nil {
 		glog.Error(err)
-		return nil, err
+		return err
 	}
-	return cancel, r.createPublication()
-}
-
-// Start -
-func Start() error {
-	return r.run()
+	err = r.createPublication()
+	if err != nil {
+		glog.Error(err)
+		return err
+	}
+	go r.run()
+	return nil
 }
 
 func (r *replication) reconnect() (err error) {
 	if r.conn == nil || r.conn.IsClosed() {
-		r.conn, err = pgconn.Connect(r.ctx, r.pgURL)
+		glog.Notice(r.pgURL)
+		r.conn, err = pgconn.Connect(ctx, r.pgURL)
 	}
 	return
 }
@@ -78,15 +88,10 @@ RECONN:
 	timeout := time.Second * 10
 	nextStandbyMessageDeadline := time.Now().Add(timeout)
 	for {
-		select {
-		case <-r.ctx.Done():
-			return nil
-		default:
-		}
 
 		if time.Now().After(nextStandbyMessageDeadline) {
 			err = pglogrepl.SendStandbyStatusUpdate(
-				r.ctx,
+				ctx,
 				r.conn,
 				pglogrepl.StandbyStatusUpdate{
 					WALWritePosition: r.lsn,
@@ -109,7 +114,7 @@ RECONN:
 				continue
 			}
 			glog.Error(err)
-			time.Sleep(time.Second * 20)
+			time.Sleep(time.Second * 5)
 			goto RECONN
 		}
 
@@ -147,7 +152,7 @@ RECONN:
 
 func (r *replication) dropPublication() error {
 	sql := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s;", slotName)
-	_, err := r.conn.Exec(r.ctx, sql).ReadAll()
+	_, err := r.conn.Exec(ctx, sql).ReadAll()
 	return err
 }
 
@@ -157,13 +162,13 @@ func (r *replication) createPublication() error {
 		return err
 	}
 	sql := fmt.Sprintf("CREATE PUBLICATION %s;", slotName)
-	_, err = r.conn.Exec(r.ctx, sql).ReadAll()
+	_, err = r.conn.Exec(ctx, sql).ReadAll()
 	return err
 }
 
 func (r *replication) createSlot() error {
 
-	_, err := pglogrepl.CreateReplicationSlot(r.ctx,
+	_, err := pglogrepl.CreateReplicationSlot(ctx,
 		r.conn,
 		slotName,
 		plugin,
@@ -173,7 +178,7 @@ func (r *replication) createSlot() error {
 }
 
 func (r *replication) close() {
-	err := pglogrepl.DropReplicationSlot(r.ctx, r.conn, slotName, pglogrepl.DropReplicationSlotOptions{})
+	err := pglogrepl.DropReplicationSlot(ctx, r.conn, slotName, pglogrepl.DropReplicationSlotOptions{})
 	if err != nil {
 		glog.Error(err)
 	}
@@ -181,32 +186,23 @@ func (r *replication) close() {
 	if err != nil {
 		glog.Error(err)
 	}
-	err = r.conn.Close(r.ctx)
+	err = r.conn.Close(ctx)
 	if err != nil {
 		glog.Error(err)
 	}
+	r.db.Close()
 }
 
 func (r *replication) startReplication() error {
-	return pglogrepl.StartReplication(r.ctx,
+	return pglogrepl.StartReplication(ctx,
 		r.conn,
 		slotName,
 		r.lsn,
 		pglogrepl.StartReplicationOptions{
 			PluginArgs: []string{
 				"proto_version '1'",
-				"publication_names 'pgcache_slot'",
+				"publication_names '" + slotName + "'",
 			},
 		},
 	)
-}
-
-func (r *replication) setLsn() error {
-	sysident, err := pglogrepl.IdentifySystem(r.ctx, r.conn)
-	if err != nil {
-		glog.Error(err)
-		return err
-	}
-	r.lsn = sysident.XLogPos
-	return nil
 }

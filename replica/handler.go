@@ -2,6 +2,7 @@ package replica
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/bendersilver/glog"
 	"github.com/jackc/pglogrepl"
@@ -22,101 +23,189 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 		glog.Error(err)
 		return err
 	}
-	var row Row
+
 	switch msg := msg.(type) {
 	case *pglogrepl.RelationMessage:
-		row.Type = Relation
 		r.relations[msg.RelationID] = msg
+
 	case *pglogrepl.InsertMessage:
-		row.Type = Insert
-		err := r.msgData(&row, msg.RelationID, msg.Tuple, nil)
+		err = r.insert(msg)
 		if err != nil {
 			glog.Error(err)
-			return err
 		}
+
 	case *pglogrepl.UpdateMessage:
-		row.Type = Update
-		err := r.msgData(&row, msg.RelationID, msg.NewTuple, msg.OldTuple)
+		err = r.update(msg)
 		if err != nil {
 			glog.Error(err)
-			return err
 		}
 	case *pglogrepl.DeleteMessage:
-		row.Type = Delete
-		err := r.msgData(&row, msg.RelationID, nil, msg.OldTuple)
+		err = r.delete(msg)
 		if err != nil {
 			glog.Error(err)
-			return err
 		}
+
 	case *pglogrepl.TruncateMessage:
-		row.Type = Truncate
-		err := r.msgData(&row, msg.RelationNum, nil, nil)
+		err = r.deleteAll(msg)
 		if err != nil {
 			glog.Error(err)
+		}
+
+	case *pglogrepl.BeginMessage:
+	case *pglogrepl.CommitMessage:
+	case *pglogrepl.TypeMessage:
+	case *pglogrepl.OriginMessage:
+	}
+	return nil
+}
+func (r *replication) update(msg *pglogrepl.UpdateMessage) error {
+	var pkVal any
+	var pkName string
+	rel, ok := r.relations[msg.RelationID]
+	if !ok {
+		return fmt.Errorf("unknown relation ID %d", msg.RelationID)
+	}
+	if msg.OldTuple != nil {
+		tuple, err := r.decodeTuple(msg.RelationID, msg.OldTuple)
+		if err != nil {
 			return err
 		}
-	case *pglogrepl.BeginMessage:
-		row.Type = Begin
-	case *pglogrepl.CommitMessage:
-		row.Type = Commit
-	case *pglogrepl.TypeMessage:
-		row.Type = Type
-	case *pglogrepl.OriginMessage:
-		row.Type = Origin
-
-	}
-	r.ch <- &row
-	return nil
-}
-
-func (r *replication) msgData(row *Row, relID uint32, newTuple, oldTuple *pglogrepl.TupleData) error {
-	rel, ok := r.relations[relID]
-	if !ok {
-		return fmt.Errorf("replication unknown relation ID %d", relID)
-	}
-	row.Shema = rel.Namespace
-	row.Table = rel.RelationName
-	if newTuple != nil {
-		row.New = make([]*Col, newTuple.ColumnNum)
-		r.decodeTuple(row.New, rel, newTuple)
-	}
-	if oldTuple != nil {
-		row.Old = make([]*Col, oldTuple.ColumnNum)
-		r.decodeTuple(row.Old, rel, oldTuple)
-	}
-	return nil
-}
-
-func (r *replication) decodeTuple(vals []*Col, rel *pglogrepl.RelationMessage, tuple *pglogrepl.TupleData) (err error) {
-	for ix, col := range tuple.Columns {
-		rc := rel.Columns[ix]
-		dt, ok := r.mi.TypeForOID(rc.DataType)
-
-		var c Col
-		c.Name = rc.Name
-		c.UDT = "bytea"
-		if ok {
-			c.UDT = dt.Name
+		for ix, col := range rel.Columns {
+			if col.Flags == 1 {
+				pkVal = tuple[ix]
+			}
 		}
-		c.PK = rc.Flags == 1
+	}
+	if msg.NewTuple != nil {
+		tuple, err := r.decodeTuple(msg.RelationID, msg.NewTuple)
+		if err != nil {
+			return err
+		}
+		rel := r.relations[msg.RelationID]
+		names := make([]string, len(tuple))
+		for ix, col := range rel.Columns {
+			if col.Flags == 1 {
+				pkName = col.Name
+				if pkVal == nil {
+					pkVal = tuple[ix]
+				}
+			}
+			names[ix] = col.Name + " = ?"
+		}
+		sql := fmt.Sprintf("UPDATE %s_%s SET %s WHERE %s = ?;",
+			rel.Namespace,
+			rel.RelationName,
+			strings.Join(names, ",\n"),
+			pkName,
+		)
+		_, err = r.db.Exec(sql, append(tuple, pkVal)...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *replication) deleteAll(msg *pglogrepl.TruncateMessage) error {
+	rel := r.relations[msg.RelationNum]
+	sql := fmt.Sprintf("DELETE FROM %s_%s;",
+		rel.Namespace,
+		rel.RelationName,
+	)
+	_, err := r.db.Exec(sql)
+	return err
+}
+
+func (r *replication) delete(msg *pglogrepl.DeleteMessage) error {
+	if msg.OldTuple != nil {
+		tuple, err := r.decodeTuple(msg.RelationID, msg.OldTuple)
+		if err != nil {
+			return err
+		}
+		rel := r.relations[msg.RelationID]
+		var pk string
+		for ix, col := range rel.Columns {
+			if col.Flags == 1 {
+				pk = col.Name
+			}
+			tuple = []any{tuple[ix]}
+		}
+		sql := fmt.Sprintf("DELETE FROM %s_%s WHERE %s = ?;",
+			rel.Namespace,
+			rel.RelationName,
+			pk,
+		)
+		_, err = r.db.Exec(sql, tuple...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *replication) insert(msg *pglogrepl.InsertMessage) error {
+	if msg.Tuple != nil {
+
+		tuple, err := r.decodeTuple(msg.RelationID, msg.Tuple)
+		if err != nil {
+			return err
+		}
+		rel := r.relations[msg.RelationID]
+		names := make([]string, len(tuple))
+		params := make([]string, len(tuple))
+		for ix, col := range rel.Columns {
+			names[ix] = col.Name
+			params[ix] = "?"
+		}
+		sql := fmt.Sprintf("INSERT INTO %s_%s(%s) VALUES (%s);",
+			rel.Namespace,
+			rel.RelationName,
+			strings.Join(names, " ,"),
+			strings.Join(params, " ,"),
+		)
+		_, err = r.db.Exec(sql, tuple...)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *replication) decodeTuple(relID uint32, tuple *pglogrepl.TupleData) (vals []any, err error) {
+	cols := r.relations[relID].Columns
+	vals = make([]any, len(cols))
+	for ix, col := range tuple.Columns {
+		rc := cols[ix]
+		dt, ok := mi.TypeForOID(rc.DataType)
 
 		switch col.DataType {
-		case 'n': // null
-			c.Value = nil
+		case 'n':
+			vals[ix] = nil
 		case 'u': // unchanged toast
 			// This TOAST value was not changed. TOAST values are not stored in the tuple, and logical replication doesn't want to spend a disk read to fetch its value for you.
 		case 't': //text
 			if ok {
-				c.Value, err = dt.Codec.DecodeValue(r.mi, rc.DataType, pgtype.TextFormatCode, col.Data)
+
+				vals[ix], err = dt.Codec.DecodeValue(mi, rc.DataType, pgtype.TextFormatCode, col.Data)
 				if err != nil {
 					glog.Error(err)
-					return err
+					return nil, err
+				}
+				vals[ix], err = converDataType(vals[ix], dt.Name)
+				if err != nil {
+					glog.Error(err)
+					return nil, err
 				}
 			} else {
-				c.Value = col.Data
+				vals[ix], err = converDataType(col.Data, "bytea")
+				if err != nil {
+					glog.Error(err)
+					return nil, err
+				}
 			}
 		}
-		vals[ix] = &c
 	}
-	return nil
+	return
 }

@@ -1,73 +1,86 @@
 package pgcache
 
 import (
+	"bytes"
 	"database/sql"
-	"net/url"
+	"fmt"
 
 	"github.com/bendersilver/pgcache/replica"
-	sqlite "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/tidwall/redcon"
 )
 
-// ListenAndServe -
-func (pc *PgCache) ListenAndServe(addr string) error {
-	go pc.startRedConn(addr)
-	return <-pc.errChan
+// Init -
+func Init(pgURL string) error {
+	err := replica.Run(pgURL)
+	if err != nil {
+		return err
+	}
+	db, err = sql.Open("sqlite3", "file:redispg?mode=memory&cache=shared&_auto_vacuum=1")
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxIdleTime(0)
+	db.SetConnMaxLifetime(0)
+
+	return nil
 }
 
-// New -
-func New(pgURL string) (*PgCache, error) {
-	if cache != nil {
-		return cache, nil
+// Start -
+func Start(addr string) error {
+	return redcon.ListenAndServe(addr, handler, accept, closed)
+}
+
+func rawQuery(sql string, args ...[]byte) ([]map[string]any, error) {
+	var values []any
+	for _, v := range args {
+		values = append(values, string(v))
 	}
-	u, err := url.Parse(pgURL)
+	rows, err := db.Query(sql, values...)
 	if err != nil {
 		return nil, err
 	}
-
-	cache = new(PgCache)
-	param := url.Values{}
-	param.Add("sslmode", "require")
-	param.Add("application_name", "redispg_copy")
-	u.RawQuery = param.Encode()
-	cache.pgURL = u.String()
-
-	sql.Register("sqlite3_custom", &sqlite.SQLiteDriver{
-		ConnectHook: func(conn *sqlite.SQLiteConn) error {
-
-			return nil
-		},
-	})
-	cache.db, err = sql.Open("sqlite3_custom", ":memory:")
+	defer rows.Close()
+	types, err := rows.ColumnTypes()
 	if err != nil {
 		return nil, err
 	}
-	cache.db.SetMaxOpenConns(1)
-	cache.db.SetConnMaxIdleTime(0)
-	cache.db.SetConnMaxLifetime(0)
-
-	cache.msgChan = make(chan *replica.Row)
-	cache.cancel, err = replica.New(pgURL, cache.msgChan)
-	if err != nil {
-		return nil, err
+	var res []map[string]any
+	for rows.Next() {
+		var scan = make([]any, len(types))
+		var m = make(map[string]any)
+		for i, f := range types {
+			var col any
+			switch f.DatabaseTypeName() {
+			case "INTEGER":
+				col = new(Integer)
+			case "REAL":
+				col = new(Numeric)
+			case "TEXT":
+				col = new(Text)
+			case "BOOLEAN":
+				col = new(Boolean)
+			default:
+				col = new(Blob)
+			}
+			scan[i] = col
+			m[f.Name()] = col
+		}
+		err = rows.Scan(scan...)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, m)
 	}
-	go cache.watchMessage()
-
-	cache.errChan = make(chan error)
-	go cache.startReplica()
-
-	cache.tables = make(map[string]*dbTable)
-
-	return cache, nil
+	return res, rows.Err()
 }
 
-// startReplica -
-func (pc *PgCache) startReplica() {
-	pc.errChan <- replica.Start()
-}
+func query(args ...[]byte) ([]map[string]any, error) {
+	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s",
+		bytes.ReplaceAll(args[0], []byte("."), []byte("_")),
+		args[1],
+	)
 
-// startReplica -
-func (pc *PgCache) startRedConn(addr string) {
-	pc.errChan <- redcon.ListenAndServe(addr, handler, accept, closed)
-	pc.cancel()
+	return rawQuery(sql, args[2:]...)
 }

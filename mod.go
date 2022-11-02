@@ -1,10 +1,12 @@
 package pgcache
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/bendersilver/glog"
 	"github.com/tidwall/redcon"
 )
 
@@ -39,9 +41,15 @@ func handler(conn redcon.Conn, cmd redcon.Command) {
 	if cm, ok := commands[strings.ToLower(string(cmd.Args[0]))]; ok {
 		err := cm.Action(conn, cmd)
 		if err != nil {
+			if err != nil {
+
+				glog.Noticef("%s", bytes.Join(cmd.Args, []byte(" ")))
+				glog.Error(err)
+			}
 			conn.WriteError(err.Error())
 		}
 	} else {
+		glog.Warningf("unknown command `%s`", cmd.Args[0])
 		conn.WriteError(fmt.Sprintf(" ERR unknown command `%s`", cmd.Args[0]))
 	}
 }

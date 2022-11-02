@@ -6,28 +6,38 @@ import (
 
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache"
+	"github.com/bendersilver/pgcache/replica"
 	"github.com/tidwall/redcon"
 )
 
 func main() {
-	pc, err := pgcache.New(os.Getenv("PG_URL"))
+	glog.Info(os.Getenv("PG_URL"))
+	err := pgcache.Init(os.Getenv("PG_URL"))
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = pgcache.AddCommand(&echo)
+	err = replica.TableAdd(`pb.users`, true)
 	if err != nil {
 		glog.Fatal(err)
 	}
-
-	err = pc.AddTable(`pb.users`, true)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	// glog.Debug("listen")
-	err = pc.ListenAndServe(":6677")
-	if err != nil {
-		glog.Fatal(err)
-	}
+	glog.Fatal(pgcache.Start(":6677"))
+	// err := replica.Run(os.Getenv("PG_URL"))
+	// if err != nil {
+	// 	glog.Fatal(err)
+	// }
+	// err = replica.TableAdd(`pb.users`, true)
+	// glog.Error(err)
+	// select {}
+	// pgcache.AddCommand(&echo)
+	// err = pc.AddTable(`pb.users`, true)
+	// if err != nil {
+	// 	glog.Fatal(err)
+	// }
+	// // glog.Debug("listen")
+	// err = pc.ListenAndServe(":6677")
+	// if err != nil {
+	// 	glog.Fatal(err)
+	// }
 }
 
 var echo = pgcache.Command{
