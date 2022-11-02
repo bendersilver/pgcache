@@ -33,14 +33,14 @@ func Run(pgURL string) error {
 	r.pgURL = u.String()
 	r.relations = make(map[uint32]*pglogrepl.RelationMessage)
 
-	r.db, err = sql.Open("sqlite3", "file:redispg?mode=memory&cache=shared&_auto_vacuum=1")
+	db, err = sql.Open("sqlite3", "file:redispg?mode=memory&cache=shared&_auto_vacuum=1")
 	if err != nil {
 		glog.Error(err)
 		return err
 	}
-	r.db.SetMaxOpenConns(1)
-	r.db.SetConnMaxIdleTime(0)
-	r.db.SetConnMaxLifetime(0)
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxIdleTime(0)
+	db.SetConnMaxLifetime(0)
 
 	err = r.reconnect()
 	if err != nil {
@@ -189,7 +189,7 @@ func (r *replication) close() {
 	if err != nil {
 		glog.Error(err)
 	}
-	r.db.Close()
+	db.Close()
 }
 
 func (r *replication) startReplication() error {

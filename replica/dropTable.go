@@ -22,10 +22,11 @@ func TableDrop(name string) error {
 		return err
 	}
 	defer conn.Close(ctx)
+
 	_, err = conn.Exec(ctx, "ALTER PUBLICATION "+slotName+" DROP TABLE "+name).ReadAll()
 	if err != nil {
 		return err
 	}
-	_, err = r.db.Exec("DROP TABLE IF EXISTS " + strings.ReplaceAll(name, ".", "_") + ";")
+	_, err = db.Exec("DROP TABLE IF EXISTS " + strings.ReplaceAll(name, ".", "_") + ";")
 	return err
 }

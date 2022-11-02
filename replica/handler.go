@@ -27,6 +27,7 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 	switch msg := msg.(type) {
 	case *pglogrepl.RelationMessage:
 		r.relations[msg.RelationID] = msg
+		checkTable(msg)
 
 	case *pglogrepl.InsertMessage:
 		err = r.insert(msg)
@@ -98,7 +99,7 @@ func (r *replication) update(msg *pglogrepl.UpdateMessage) error {
 			strings.Join(names, ",\n"),
 			pkName,
 		)
-		_, err = r.db.Exec(sql, append(tuple, pkVal)...)
+		_, err = db.Exec(sql, append(tuple, pkVal)...)
 		if err != nil {
 			return err
 		}
@@ -113,7 +114,7 @@ func (r *replication) deleteAll(msg *pglogrepl.TruncateMessage) error {
 		rel.Namespace,
 		rel.RelationName,
 	)
-	_, err := r.db.Exec(sql)
+	_, err := db.Exec(sql)
 	return err
 }
 
@@ -136,7 +137,7 @@ func (r *replication) delete(msg *pglogrepl.DeleteMessage) error {
 			rel.RelationName,
 			pk,
 		)
-		_, err = r.db.Exec(sql, tuple...)
+		_, err = db.Exec(sql, tuple...)
 		if err != nil {
 			return err
 		}
@@ -165,7 +166,7 @@ func (r *replication) insert(msg *pglogrepl.InsertMessage) error {
 			strings.Join(names, " ,"),
 			strings.Join(params, " ,"),
 		)
-		_, err = r.db.Exec(sql, tuple...)
+		_, err = db.Exec(sql, tuple...)
 		if err != nil {
 			return err
 		}

@@ -3,12 +3,8 @@ package replica
 import (
 	"bytes"
 	"database/sql"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
-	"sync"
-	"time"
 
 	"github.com/bendersilver/glog"
 	"github.com/jackc/pglogrepl"
@@ -21,16 +17,14 @@ const (
 	plugin   = "pgoutput"
 )
 
+var db *sql.DB
 var mi = pgtype.NewMap()
 var signature = []byte{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, 0xFF, 0x0D, 0x0A, 0x00}
 
 // replication -
 type replication struct {
-	sync.Mutex
-
 	pgURL string
 
-	db        *sql.DB
 	conn      *pgconn.PgConn
 	lsn       pglogrepl.LSN
 	relations map[uint32]*pglogrepl.RelationMessage
@@ -100,32 +94,4 @@ func (t *tmpTable) decodeColumn(format int16, f pgconn.FieldDescription, data []
 	} else {
 		return converDataType(data, "bytea")
 	}
-}
-
-func converDataType(v any, udt string) (any, error) {
-	switch udt {
-	case "timestamp", "timestamptz", "date":
-		if v, ok := v.(time.Time); ok {
-			return v.UnixMicro(), nil
-		}
-	case "int2", "int4", "int8", "bool", "text", "varchar", "name", "numeric", "float4", "float8":
-		return v, nil
-
-	}
-	return json.Marshal(v)
-}
-
-func readInt32(r io.Reader) int32 {
-	var buf [4]byte
-	if _, err := io.ReadFull(r, buf[:]); err != nil {
-		return 0
-	}
-	return int32(binary.BigEndian.Uint32(buf[:]))
-}
-func readInt16(r io.Reader) int16 {
-	var buf [2]byte
-	if _, err := io.ReadFull(r, buf[:]); err != nil {
-		return 0
-	}
-	return int16(binary.BigEndian.Uint16(buf[:]))
 }

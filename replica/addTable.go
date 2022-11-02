@@ -43,34 +43,18 @@ func TableAdd(tableName string, initData bool) error {
 
 	create := make([]string, len(cmt.Fields))
 	for i, f := range cmt.Fields {
-		create[i] = f.Name
-
-		if dt, ok := mi.TypeForOID(f.DataTypeOID); !ok {
-			create[i] += " BLOB"
-		} else {
-			switch dt.Name {
-			case "bool":
-				create[i] += " BOOLEAN"
-			case "int2", "int4", "int8", "timestamp", "timestamptz", "date":
-				create[i] += " INTEGER"
-			case "numeric", "float4", "float8":
-				create[i] += " REAL"
-			case "text", "varchar", "name":
-				create[i] += " TEXT"
-			default:
-				create[i] += " BLOB"
-			}
-		}
+		create[i] = f.Name + fldType(f.DataTypeOID)
 	}
 	dbName := strings.ReplaceAll(tableName, ".", "_")
-	_, err = r.db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", dbName, strings.Join(create, ",\n")))
+	_, err = db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", dbName, strings.Join(create, ",\n")))
 	if err != nil {
 		return err
 	}
 	for i := range create {
 		create[i] = "?"
 	}
-	t.insert, err = r.db.Prepare(fmt.Sprintf("INSERT INTO %s VALUES (%s);", dbName, strings.Join(create, ", ")))
+
+	t.insert, err = db.Prepare(fmt.Sprintf("INSERT INTO %s VALUES (%s);", dbName, strings.Join(create, ", ")))
 	if err != nil {
 		return err
 	}
