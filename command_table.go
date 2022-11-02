@@ -17,34 +17,15 @@ func init() {
 			FirstKey: 1, LastKey: 0, KeyStep: 0,
 			Arity: 2,
 			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type ='table' AND name NOT LIKE 'sqlite_%';`)
+				if len(cmd.Args) != 3 {
+					return wrongArity
+				}
+				var create string
+				err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE name=?;`, string(cmd.Args[1])).Scan(&create)
 				if err != nil {
 					return err
 				}
-				defer rows.Close()
-
-				var items []string
-				for rows.Next() {
-					var item string
-					err = rows.Scan(&item)
-					if err != nil {
-						glog.Error(err)
-					}
-					items = append(items, item)
-
-				}
-				if rows.Err() != nil {
-					return rows.Err()
-				}
-				if len(items) == 0 {
-					conn.WriteNull()
-					return nil
-				}
-				conn.WriteArray(len(items))
-				for _, t := range items {
-					conn.WriteString(t)
-				}
-
+				conn.WriteString(create)
 				return nil
 			},
 		},
