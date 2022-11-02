@@ -142,8 +142,10 @@ func (n *Text) Scan(value interface{}) (err error) {
 		return nil
 	case float64:
 		n.String, n.Valid = strconv.FormatFloat(value, 'f', -1, 64), true
+		return nil
 	case int64:
 		n.String, n.Valid = fmt.Sprintf("%d", value), true
+		return nil
 	case nil:
 		return nil
 	}
