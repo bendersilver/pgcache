@@ -29,15 +29,15 @@ func init() {
 					var name, typ string
 					v, ok := t["name"]
 					if ok {
-						name = v.String()
+						name = v.Str()
 					}
 
 					v, ok = t["type"]
 					if ok {
-						typ = v.String()
+						typ = v.Str()
 					}
 					v, ok = t["pk"]
-					if ok && v.String() == "1" {
+					if ok && v.Str() == "1" {
 						typ = fmt.Sprintf("%-14sPRIMARY KEY", typ)
 					}
 					conn.WriteString(fmt.Sprintf("%-25s%s", name, typ))
@@ -64,7 +64,7 @@ func init() {
 				}
 				conn.WriteArray(len(arr))
 				for _, t := range arr {
-					conn.WriteString(t["name"].String())
+					conn.WriteString(t["name"].Str())
 				}
 				return nil
 			},

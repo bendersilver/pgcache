@@ -8,10 +8,11 @@ import (
 	"github.com/tidwall/redcon"
 )
 
+// DataType -
 type DataType interface {
 	Scan(value any) error
 	MarshalJSON() ([]byte, error)
-	String() string
+	Str() string
 }
 
 // Blob -
@@ -35,8 +36,8 @@ func (n *Blob) Scan(value interface{}) (err error) {
 	return fmt.Errorf("invalid type %T for Blob", value)
 }
 
-// String -
-func (n *Blob) String() string {
+// Str -
+func (n *Blob) Str() string {
 	if n.Byte == nil {
 		return "(nil)"
 	}
@@ -74,8 +75,8 @@ func (n *Boolean) Scan(value interface{}) error {
 	return fmt.Errorf("invalid type %T for Boolean", value)
 }
 
-// String -
-func (n *Boolean) String() string {
+// Str -
+func (n *Boolean) Str() string {
 	if !n.Valid {
 		return "(nil)"
 	}
@@ -112,8 +113,8 @@ func (n *Integer) Scan(value interface{}) error {
 	return fmt.Errorf("invalid type %T for integer", value)
 }
 
-// String -
-func (n *Integer) String() string {
+// Str -
+func (n *Integer) Str() string {
 	if !n.Valid {
 		return "(nil)"
 	}
@@ -147,8 +148,8 @@ func (n *Numeric) Scan(value interface{}) error {
 	return fmt.Errorf("invalid type %T for Numeric", value)
 }
 
-// String -
-func (n *Numeric) String() string {
+// Str -
+func (n *Numeric) Str() string {
 	if !n.Valid {
 		return "(nil)"
 	}
@@ -165,18 +166,18 @@ func (n Numeric) MarshalJSON() ([]byte, error) {
 
 // Text -
 type Text struct {
-	Str   string
-	Valid bool
+	String string
+	Valid  bool
 }
 
 // Scan -
 func (n *Text) Scan(value interface{}) (err error) {
 	switch value := value.(type) {
 	case string:
-		n.Str, n.Valid = value, true
+		n.String, n.Valid = value, true
 		return nil
 	case []byte:
-		n.Str, n.Valid = string(value), true
+		n.String, n.Valid = string(value), true
 		return nil
 	case nil:
 		return nil
@@ -184,12 +185,12 @@ func (n *Text) Scan(value interface{}) (err error) {
 	return fmt.Errorf("invalid type %T for Text", value)
 }
 
-// String -
-func (n *Text) String() string {
+// Str -
+func (n *Text) Str() string {
 	if !n.Valid {
 		return "(nil)"
 	}
-	return n.Str
+	return n.String
 }
 
 // MarshalJSON -
