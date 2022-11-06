@@ -27,6 +27,6 @@ func TableDrop(name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec("DROP TABLE IF EXISTS " + strings.ReplaceAll(name, ".", "_") + ";")
+	err = db.Exec("DROP TABLE IF EXISTS " + strings.ReplaceAll(name, ".", "_") + ";")
 	return err
 }

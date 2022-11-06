@@ -6,9 +6,16 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TableAdd(tableName string, initData bool) error {
+type AddOptions struct {
+	TableName string
+	Init      bool
+	Query     string
+}
+
+func TableAdd(opt *AddOptions) error {
 	u, err := url.Parse(r.pgURL)
 	if err != nil {
 		return err
@@ -24,14 +31,14 @@ func TableAdd(tableName string, initData bool) error {
 	}
 	defer conn.Close(ctx)
 
-	_, err = conn.Exec(ctx, "ALTER PUBLICATION "+slotName+" ADD TABLE "+tableName).ReadAll()
+	_, err = conn.Exec(ctx, "ALTER PUBLICATION "+slotName+" ADD TABLE "+opt.TableName).ReadAll()
 	if err != nil {
 		return err
 	}
 
 	cmt, err := conn.Prepare(ctx,
-		tableName,
-		"SELECT * FROM "+tableName+" LIMIT 1",
+		opt.TableName,
+		"SELECT * FROM "+opt.TableName+" LIMIT 1",
 		nil,
 	)
 	if err != nil {
@@ -39,14 +46,24 @@ func TableAdd(tableName string, initData bool) error {
 	}
 	var t tmpTable
 	t.field = cmt.Fields
-	t.dbName = tableName
+	t.dbName = opt.TableName
 
 	create := make([]string, len(cmt.Fields))
 	for i, f := range cmt.Fields {
-		create[i] = f.Name + fldType(f.DataTypeOID)
+		create[i] = f.Name
+		switch f.DataTypeOID {
+		case pgtype.BoolOID:
+			create[i] += " BOOLEAN"
+		case pgtype.Int2OID, pgtype.Int4OID, pgtype.Int8OID, pgtype.TimestampOID, pgtype.TimestamptzOID, pgtype.DateOID:
+			create[i] += " INTEGER"
+		case pgtype.NumericOID, pgtype.Float4OID, pgtype.Float8OID:
+			create[i] += " TEXT"
+		default:
+			create[i] += " BLOB"
+		}
 	}
-	dbName := strings.ReplaceAll(tableName, ".", "_")
-	_, err = db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", dbName, strings.Join(create, ",\n")))
+	dbName := strings.ReplaceAll(opt.TableName, ".", "_")
+	err = db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", dbName, strings.Join(create, ",\n")))
 	if err != nil {
 		return err
 	}
@@ -60,8 +77,12 @@ func TableAdd(tableName string, initData bool) error {
 	}
 	defer t.insert.Close()
 
-	if initData {
-		_, err := conn.CopyTo(ctx, &t, "COPY BINARY "+t.dbName+" TO STDOUT;")
+	if opt.Init {
+		if opt.Query != "" {
+			_, err = conn.CopyTo(ctx, &t, "COPY ("+opt.Query+") TO STDOUT WITH BINARY;")
+		} else {
+			_, err = conn.CopyTo(ctx, &t, "COPY BINARY "+t.dbName+" TO STDOUT;")
+		}
 		if err != nil {
 			return err
 		}

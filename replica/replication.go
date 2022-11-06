@@ -2,12 +2,12 @@ package replica
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/url"
 	"time"
 
 	"github.com/bendersilver/glog"
+	"github.com/bendersilver/pgcache/sqlite"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
@@ -31,16 +31,12 @@ func Run(pgURL string) error {
 	u.RawQuery = param.Encode()
 
 	r.pgURL = u.String()
-	r.relations = make(map[uint32]*pglogrepl.RelationMessage)
-
-	db, err = sql.Open("sqlite3", "file:redispg?mode=memory&cache=shared&_auto_vacuum=1")
+	r.relations = make(map[uint32]*relationItem)
+	db, err = sqlite.NewMemConn()
 	if err != nil {
 		glog.Error(err)
 		return err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetConnMaxIdleTime(0)
-	db.SetConnMaxLifetime(0)
 
 	err = r.reconnect()
 	if err != nil {

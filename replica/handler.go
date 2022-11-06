@@ -1,10 +1,12 @@
 package replica
 
 import (
+	"database/sql/driver"
 	"fmt"
 	"strings"
 
 	"github.com/bendersilver/glog"
+	"github.com/bendersilver/pgcache/sqlite"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,30 +28,55 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 
 	switch msg := msg.(type) {
 	case *pglogrepl.RelationMessage:
-		r.relations[msg.RelationID] = msg
-		checkTable(msg)
+		r.relations[msg.RelationID], err = newRrelationItem(msg)
+		if err != nil {
+			return err
+		}
 
 	case *pglogrepl.InsertMessage:
-		err = r.insert(msg)
-		if err != nil {
-			glog.Error(err)
+		rel, ok := r.relations[msg.RelationID]
+		if !ok {
+			glog.Error("pglogrepl.InsertMessage.id %d not found", msg.RelationID)
+		} else {
+			err = rel.insertMsg(msg)
+			if err != nil {
+				glog.Error(err)
+			}
 		}
 
 	case *pglogrepl.UpdateMessage:
-		err = r.update(msg)
-		if err != nil {
-			glog.Error(err)
+		rel, ok := r.relations[msg.RelationID]
+		if !ok {
+			glog.Error("pglogrepl.UpdateMessage.id %d not found", msg.RelationID)
+		} else {
+			err = rel.updateMsg(msg)
+			if err != nil {
+				glog.Error(err)
+			}
 		}
+
 	case *pglogrepl.DeleteMessage:
-		err = r.delete(msg)
-		if err != nil {
-			glog.Error(err)
+		rel, ok := r.relations[msg.RelationID]
+		if !ok {
+			glog.Error("pglogrepl.DeleteMessage.id %d not found", msg.RelationID)
+		} else {
+			err = rel.deleteMsg(msg)
+			if err != nil {
+				glog.Error(err)
+			}
 		}
 
 	case *pglogrepl.TruncateMessage:
-		err = r.deleteAll(msg)
-		if err != nil {
-			glog.Error(err)
+		for _, relID := range msg.RelationIDs {
+			rel, ok := r.relations[relID]
+			if !ok {
+				glog.Error("pglogrepl.TruncateMessage.id %d not found", relID)
+			} else {
+				err = rel.deleteAll()
+				if err != nil {
+					glog.Error(err)
+				}
+			}
 		}
 
 	case *pglogrepl.BeginMessage:
@@ -59,152 +86,141 @@ func (r *replication) handle(m *pgproto3.CopyData) error {
 	}
 	return nil
 }
-func (r *replication) update(msg *pglogrepl.UpdateMessage) error {
-	var pkVal any
-	var pkName string
-	rel, ok := r.relations[msg.RelationID]
-	if !ok {
-		return fmt.Errorf("unknown relation ID %d", msg.RelationID)
+
+type relationItem struct {
+	msg       *pglogrepl.RelationMessage
+	tableName string
+	pkIx      int
+	insert    *sqlite.Stmt
+	update    *sqlite.Stmt
+	delete    *sqlite.Stmt
+	truncate  *sqlite.Stmt
+}
+
+func newRrelationItem(m *pglogrepl.RelationMessage) (ri *relationItem, err error) {
+	ri = new(relationItem)
+	ri.msg = m
+	ri.tableName = fmt.Sprintf("%s_%s", m.Namespace, m.RelationName)
+	names := make([]string, len(m.Columns))
+	params := make([]string, len(m.Columns))
+	for i, c := range m.Columns {
+		if c.Flags == 1 {
+			ri.pkIx = i
+		}
+		names[i] = c.Name
+		params[i] = "?"
 	}
+	sql := fmt.Sprintf("INSERT OR IGNORE INTO %s(%s) VALUES (%s);",
+		ri.tableName,
+		strings.Join(names, " ,"),
+		strings.Join(params, " ,"),
+	)
+	ri.insert, err = db.Prepare(sql)
+	if err != nil {
+		glog.Error(err)
+		return
+	}
+
+	sql = fmt.Sprintf("DELETE FROM %s WHERE %s = ?;",
+		ri.tableName,
+		m.Columns[ri.pkIx].Name,
+	)
+	ri.delete, err = db.Prepare(sql)
+	if err != nil {
+		glog.Error(err)
+		return
+	}
+
+	ri.truncate, err = db.Prepare(fmt.Sprintf("DELETE FROM %s;", ri.tableName))
+	if err != nil {
+		glog.Error(err)
+		return
+	}
+
+	for i, v := range names {
+		params[i] = v + " = ?"
+	}
+	sql = fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?;",
+		ri.tableName,
+		strings.Join(params, " ,"),
+		m.Columns[ri.pkIx].Name,
+	)
+	ri.update, err = db.Prepare(sql)
+	return
+}
+
+func (ri *relationItem) updateMsg(msg *pglogrepl.UpdateMessage) error {
+	var pk driver.Value
 	if msg.OldTuple != nil {
-		tuple, err := r.decodeTuple(msg.RelationID, msg.OldTuple)
+		tuple, err := ri.decodeTuple(msg.OldTuple)
 		if err != nil {
 			return err
 		}
-		for ix, col := range rel.Columns {
-			if col.Flags == 1 {
-				pkVal = tuple[ix]
+		for i, c := range ri.msg.Columns {
+			if c.Flags == 1 {
+				pk = tuple[i]
+				break
 			}
 		}
 	}
 	if msg.NewTuple != nil {
-		tuple, err := r.decodeTuple(msg.RelationID, msg.NewTuple)
+		tuple, err := ri.decodeTuple(msg.NewTuple)
 		if err != nil {
 			return err
 		}
-		rel := r.relations[msg.RelationID]
-		names := make([]string, len(tuple))
-		for ix, col := range rel.Columns {
-			if col.Flags == 1 {
-				pkName = col.Name
-				if pkVal == nil {
-					pkVal = tuple[ix]
-				}
-			}
-			names[ix] = col.Name + " = ?"
+		if pk == nil {
+			pk = tuple[ri.pkIx]
 		}
-		sql := fmt.Sprintf("UPDATE %s_%s SET %s WHERE %s = ?;",
-			rel.Namespace,
-			rel.RelationName,
-			strings.Join(names, ",\n"),
-			pkName,
-		)
-		_, err = db.Exec(sql, append(tuple, pkVal)...)
-		if err != nil {
-			return err
-		}
+		tuple = append(tuple, pk)
+		return ri.update.Exec(tuple...)
 	}
 
 	return nil
 }
 
-func (r *replication) deleteAll(msg *pglogrepl.TruncateMessage) error {
-	rel := r.relations[msg.RelationNum]
-	sql := fmt.Sprintf("DELETE FROM %s_%s;",
-		rel.Namespace,
-		rel.RelationName,
-	)
-	_, err := db.Exec(sql)
-	return err
+func (ri *relationItem) deleteAll() error {
+	return ri.truncate.Exec()
 }
 
-func (r *replication) delete(msg *pglogrepl.DeleteMessage) error {
+func (ri *relationItem) deleteMsg(msg *pglogrepl.DeleteMessage) error {
 	if msg.OldTuple != nil {
-		tuple, err := r.decodeTuple(msg.RelationID, msg.OldTuple)
+		tuple, err := ri.decodeTuple(msg.OldTuple)
 		if err != nil {
 			return err
 		}
-		rel := r.relations[msg.RelationID]
-		var pk string
-		for ix, col := range rel.Columns {
-			if col.Flags == 1 {
-				pk = col.Name
-			}
-			tuple = []any{tuple[ix]}
-		}
-		sql := fmt.Sprintf("DELETE FROM %s_%s WHERE %s = ?;",
-			rel.Namespace,
-			rel.RelationName,
-			pk,
-		)
-		_, err = db.Exec(sql, tuple...)
-		if err != nil {
-			return err
-		}
+		return ri.delete.Exec(tuple[ri.pkIx])
 	}
 
 	return nil
 }
 
-func (r *replication) insert(msg *pglogrepl.InsertMessage) error {
+func (ri *relationItem) insertMsg(msg *pglogrepl.InsertMessage) error {
 	if msg.Tuple != nil {
 
-		tuple, err := r.decodeTuple(msg.RelationID, msg.Tuple)
+		tuple, err := ri.decodeTuple(msg.Tuple)
 		if err != nil {
 			return err
 		}
-		rel := r.relations[msg.RelationID]
-		names := make([]string, len(tuple))
-		params := make([]string, len(tuple))
-		for ix, col := range rel.Columns {
-			names[ix] = col.Name
-			params[ix] = "?"
-		}
-		sql := fmt.Sprintf("INSERT OR IGNORE INTO %s_%s(%s) VALUES (%s);",
-			rel.Namespace,
-			rel.RelationName,
-			strings.Join(names, " ,"),
-			strings.Join(params, " ,"),
-		)
-		_, err = db.Exec(sql, tuple...)
-		if err != nil {
-			return err
-		}
+		return ri.insert.Exec(tuple...)
 	}
 	return nil
 }
 
-func (r *replication) decodeTuple(relID uint32, tuple *pglogrepl.TupleData) (vals []any, err error) {
-	cols := r.relations[relID].Columns
-	vals = make([]any, len(cols))
+func (ri *relationItem) decodeTuple(tuple *pglogrepl.TupleData) (vals []driver.Value, err error) {
+	cols := ri.msg.Columns
+	vals = make([]driver.Value, len(cols))
 	for ix, col := range tuple.Columns {
 		rc := cols[ix]
-		dt, ok := mi.TypeForOID(rc.DataType)
-
 		switch col.DataType {
 		case 'n':
 			vals[ix] = nil
 		case 'u': // unchanged toast
 			// This TOAST value was not changed. TOAST values are not stored in the tuple, and logical replication doesn't want to spend a disk read to fetch its value for you.
 		case 't': //text
-			if ok {
-
-				vals[ix], err = dt.Codec.DecodeValue(mi, rc.DataType, pgtype.TextFormatCode, col.Data)
-				if err != nil {
-					glog.Error(err)
-					return nil, err
-				}
-				vals[ix], err = converDataType(vals[ix], dt.Name)
-				if err != nil {
-					glog.Error(err)
-					return nil, err
-				}
-			} else {
-				vals[ix], err = converDataType(col.Data, "bytea")
-				if err != nil {
-					glog.Error(err)
-					return nil, err
-				}
+			vals[ix], err = decodeColumn(pgtype.TextFormatCode, rc.DataType, col.Data)
+			if err != nil {
+				glog.Error(err)
+				return nil, err
 			}
 		}
 	}
