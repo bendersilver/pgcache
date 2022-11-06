@@ -2,6 +2,7 @@ package pgcache
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 
@@ -54,6 +55,7 @@ func AddCommand(cmd ...*Command) error {
 
 func handler(conn redcon.Conn, cmd redcon.Command) {
 	if cm, ok := commands[strings.ToLower(string(cmd.Args[0]))]; ok {
+		conn.SetContext(db)
 		err := cm.Action(conn, cmd)
 		if err != nil {
 			if err != nil {
@@ -64,10 +66,24 @@ func handler(conn redcon.Conn, cmd redcon.Command) {
 			conn.WriteError(err.Error())
 		}
 	} else {
-		glog.Warningf("unknown command `%s`", cmd.Args[0])
-		for _, v := range cmd.Args[1:] {
-			glog.Warningf("\targ: %s", v)
+		if rdb != nil {
+			arg := make([]any, len(cmd.Args))
+			for i, c := range cmd.Args {
+				arg[i] = c
+			}
+
+			res, err := rdb.Do(context.Background(), arg...).Result()
+			if err != nil {
+				conn.WriteError(err.Error())
+			} else {
+				conn.WriteAny(res)
+			}
+		} else {
+			glog.Warningf("unknown command `%s`", cmd.Args[0])
+			for _, v := range cmd.Args[1:] {
+				glog.Warningf("\targ: %s", v)
+			}
+			conn.WriteError(fmt.Sprintf("ERR unknown command `%s`", cmd.Args[0]))
 		}
-		conn.WriteError(fmt.Sprintf("ERR unknown command `%s`", cmd.Args[0]))
 	}
 }

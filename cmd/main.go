@@ -7,11 +7,12 @@ import (
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache"
 	"github.com/bendersilver/pgcache/replica"
+	"github.com/go-redis/redis/v9"
 	"github.com/tidwall/redcon"
 )
 
 func main() {
-	err := pgcache.Init(os.Getenv("PG_URL"))
+	err := pgcache.Init(os.Getenv("PG_URL"), &redis.Options{})
 	if err != nil {
 		glog.Fatal(err)
 	}
