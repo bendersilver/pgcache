@@ -11,7 +11,7 @@ func tableName(b []byte) string {
 
 func queryFld(args ...[]byte) ([]map[string]DataType, error) {
 	sql := fmt.Sprintf("SELECT %s FROM %s WHERE %s", args[1], tableName(args[0]), args[2])
-	return rawQuery(sql, args[2:]...)
+	return rawQuery(sql, args[3:]...)
 }
 
 func query(args ...[]byte) ([]map[string]DataType, error) {
