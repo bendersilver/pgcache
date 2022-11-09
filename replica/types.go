@@ -109,7 +109,6 @@ func decodeColumn(format int16, oid uint32, data []byte) (v driver.Value, err er
 			glog.Errorf("val %s, err: %v", data, err)
 			return nil, err
 		}
-		// glog.Debugf("%T %v", dv, dv)
 		switch dv.(type) {
 		case []byte:
 			v, err = dt.Codec.DecodeValue(mi, oid, format, data)
