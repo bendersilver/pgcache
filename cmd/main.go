@@ -21,9 +21,8 @@ func main() {
 	// 	glog.Fatal(err)
 	// }
 	err = replica.TableAdd(&replica.AddOptions{
-		TableName: "pb.users",
+		TableName: "pb.tariff",
 		Init:      true,
-		Query:     "SELECT * FROM pb.users WHERE id > 600",
 	})
 	if err != nil {
 		glog.Fatal(err)
