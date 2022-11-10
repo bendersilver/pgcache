@@ -7,19 +7,35 @@ import (
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache"
 	"github.com/bendersilver/pgcache/replica"
+	"github.com/go-redis/redis/v9"
 	"github.com/tidwall/redcon"
 )
 
 func main() {
-	glog.Info(os.Getenv("PG_URL"))
-	err := pgcache.Init(os.Getenv("PG_URL"))
+	err := pgcache.Init(os.Getenv("PG_URL"), &redis.Options{})
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = replica.TableAdd(`pb.users`, true)
+	// err = replica.TableAdd(`pb.temp`, true)
+	// if err != nil {
+	// 	glog.Fatal(err)
+	// }
+	err = replica.TableAdd(&replica.AddOptions{
+		TableName: "pb.users",
+		Init:      true,
+		Query:     "SELECT * FROM pb.users WHERE id > 600",
+	})
 	if err != nil {
 		glog.Fatal(err)
 	}
+	// err = replica.TableAdd(`pb.users_base`, true)
+	// if err != nil {
+	// 	glog.Fatal(err)
+	// }
+	// err = replica.TableAdd(`pb.const`, true)
+	// if err != nil {
+	// 	glog.Fatal(err)
+	// }
 	glog.Fatal(pgcache.Start(":6677"))
 }
 

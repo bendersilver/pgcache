@@ -20,27 +20,17 @@ func init() {
 				if len(cmd.Args) != 2 {
 					return wrongArity
 				}
-				arr, err := rawQuery(fmt.Sprintf(`PRAGMA table_info(%s);`, tableName(cmd.Args[1])))
+				qs, err := db.QuerySet(fmt.Sprintf(`PRAGMA table_info(%s);`, tableName(cmd.Args[1])))
 				if err != nil {
 					return err
 				}
-				conn.WriteArray(len(arr))
-				for _, t := range arr {
-					var name, typ string
-					v, ok := t["name"]
-					if ok {
-						name = v.Str()
-					}
-
-					v, ok = t["type"]
-					if ok {
-						typ = v.Str()
-					}
-					v, ok = t["pk"]
-					if ok && v.Str() == "1" {
-						typ = fmt.Sprintf("%-14sPRIMARY KEY", typ)
-					}
-					conn.WriteString(fmt.Sprintf("%-25s%s", name, typ))
+				if len(qs.Rows) == 0 {
+					conn.WriteNull()
+					return nil
+				}
+				conn.WriteArray(len(qs.Rows))
+				for _, vals := range qs.Rows {
+					conn.WriteString(fmt.Sprintf("%-25v%v", vals[1], vals[2]))
 				}
 				return nil
 			},
@@ -52,19 +42,23 @@ func init() {
 			FirstKey: 0, LastKey: 0, KeyStep: 0,
 			Arity: 1,
 			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-
-				arr, err := rawQuery(`
-						SELECT name
-						FROM sqlite_schema
-						WHERE type ='table'
-							AND name NOT LIKE 'sqlite_%';
-					`, nil)
+				qs, err := db.QuerySet(`
+					SELECT name
+					FROM sqlite_schema
+					WHERE type ='table'
+						AND name NOT LIKE 'sqlite_%';
+				`)
 				if err != nil {
 					return err
 				}
-				conn.WriteArray(len(arr))
-				for _, t := range arr {
-					conn.WriteString(t["name"].Str())
+				if len(qs.Rows) == 0 {
+					conn.WriteNull()
+					return nil
+				}
+
+				conn.WriteArray(len(qs.Rows))
+				for _, vals := range qs.Rows {
+					conn.WriteAny(vals[0])
 				}
 				return nil
 			},
@@ -75,15 +69,20 @@ func init() {
 			Flags:    "admin write blocking",
 			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: 3,
-			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) != 3 {
+			Action: func(conn redcon.Conn, cmd redcon.Command) (err error) {
+				if len(cmd.Args) < 3 {
 					return wrongArity
 				}
-				b, err := strconv.ParseBool(string(cmd.Args[2]))
+				var opt replica.AddOptions
+				opt.TableName = string(cmd.Args[1])
+				opt.Init, err = strconv.ParseBool(string(cmd.Args[2]))
 				if err != nil {
 					return err
 				}
-				err = replica.TableAdd(string(cmd.Args[1]), b)
+				if len(cmd.Args) > 3 {
+					opt.Query = string(cmd.Args[3])
+				}
+				err = replica.TableAdd(&opt)
 				if err != nil {
 					return err
 				}

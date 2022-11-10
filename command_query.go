@@ -1,7 +1,8 @@
 package pgcache
 
 import (
-	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/tidwall/redcon"
 )
@@ -14,24 +15,28 @@ func init() {
 			Flags:    "readonly blocking",
 			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: -2,
-			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) < 4 {
+			Action: func(conn redcon.Conn, cmd redcon.Command) (err error) {
+				if len(cmd.Args) < 2 {
 					return wrongArity
-				}
-				arr, err := query(cmd.Args[1:]...)
-				if err != nil {
-					return err
-				}
-				if len(arr) > 0 {
-					b, err := json.Marshal(arr[0])
-					if err != nil {
-						return err
-					}
-					conn.WriteBulk(b)
+				} else if len(cmd.Args) == 2 {
+					err = writeJsonRow(
+						conn,
+						fmt.Sprintf(`SELECT * FROM %s`, tableName(cmd.Args[1])),
+					)
 				} else {
-					conn.WriteNull()
+					if len(cmd.Args) < 4 {
+						return wrongArity
+					}
+					err = writeJsonRow(
+						conn,
+						fmt.Sprintf(`SELECT * FROM %s WHERE %s`,
+							tableName(cmd.Args[1]),
+							cmd.Args[2],
+						),
+						cmd.Args[3:]...,
+					)
 				}
-				return nil
+				return err
 			},
 		},
 		&Command{
@@ -40,24 +45,32 @@ func init() {
 			Flags:    "readonly blocking",
 			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: -2,
-			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) < 5 {
+			Action: func(conn redcon.Conn, cmd redcon.Command) (err error) {
+				if len(cmd.Args) < 3 {
 					return wrongArity
-				}
-				arr, err := queryFld(cmd.Args[1:]...)
-				if err != nil {
-					return err
-				}
-				if len(arr) > 0 {
-					b, err := json.Marshal(arr[0])
-					if err != nil {
-						return err
-					}
-					conn.WriteBulk(b)
+				} else if len(cmd.Args) == 3 {
+					err = writeJsonRow(
+						conn,
+						fmt.Sprintf(
+							`SELECT %s FROM %s`, cmd.Args[2],
+							tableName(cmd.Args[2]),
+						),
+					)
 				} else {
-					conn.WriteNull()
+					if len(cmd.Args) < 5 {
+						return wrongArity
+					}
+					err = writeJsonRow(
+						conn,
+						fmt.Sprintf(`SELECT %s FROM %s WHERE %s`,
+							cmd.Args[1],
+							tableName(cmd.Args[2]),
+							cmd.Args[3],
+						),
+						cmd.Args[4:]...,
+					)
 				}
-				return nil
+				return err
 			},
 		},
 		&Command{
@@ -66,27 +79,28 @@ func init() {
 			Flags:    "readonly blocking",
 			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: -2,
-			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) < 4 {
+			Action: func(conn redcon.Conn, cmd redcon.Command) (err error) {
+				if len(cmd.Args) < 2 {
 					return wrongArity
-				}
-				arr, err := query(cmd.Args[1:]...)
-				if err != nil {
-					return err
-				}
-				if len(arr) > 0 {
-					conn.WriteArray(len(arr))
-					for _, item := range arr {
-						b, err := json.Marshal(item)
-						if err != nil {
-							return err
-						}
-						conn.WriteBulk(b)
-					}
+				} else if len(cmd.Args) == 2 {
+					err = writeJsonRows(
+						conn,
+						fmt.Sprintf(`SELECT * FROM %s`, tableName(cmd.Args[1])),
+					)
 				} else {
-					conn.WriteNull()
+					if len(cmd.Args) < 4 {
+						return wrongArity
+					}
+					err = writeJsonRows(
+						conn,
+						fmt.Sprintf(`SELECT * FROM %s WHERE %s`,
+							tableName(cmd.Args[1]),
+							cmd.Args[2],
+						),
+						cmd.Args[3:]...,
+					)
 				}
-				return nil
+				return err
 			},
 		},
 		&Command{
@@ -95,27 +109,31 @@ func init() {
 			Flags:    "readonly blocking",
 			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: -2,
-			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) < 5 {
+			Action: func(conn redcon.Conn, cmd redcon.Command) (err error) {
+				if len(cmd.Args) < 3 {
 					return wrongArity
-				}
-				arr, err := queryFld(cmd.Args[1:]...)
-				if err != nil {
-					return err
-				}
-				if len(arr) > 0 {
-					conn.WriteArray(len(arr))
-					for _, item := range arr {
-						b, err := json.Marshal(item)
-						if err != nil {
-							return err
-						}
-						conn.WriteBulk(b)
-					}
+				} else if len(cmd.Args) == 3 {
+					err = writeJsonRows(
+						conn,
+						fmt.Sprintf(`SELECT %s FROM %s`, cmd.Args[2],
+							tableName(cmd.Args[2]),
+						),
+					)
 				} else {
-					conn.WriteNull()
+					if len(cmd.Args) < 5 {
+						return wrongArity
+					}
+					err = writeJsonRows(
+						conn,
+						fmt.Sprintf(`SELECT %s FROM %s WHERE %s`,
+							cmd.Args[1],
+							tableName(cmd.Args[2]),
+							cmd.Args[3],
+						),
+						cmd.Args[4:]...,
+					)
 				}
-				return nil
+				return err
 			},
 		},
 		&Command{
@@ -124,29 +142,61 @@ func init() {
 			Flags:    "readonly blocking",
 			FirstKey: 1, LastKey: 1, KeyStep: 1,
 			Arity: -2,
-			Action: func(conn redcon.Conn, cmd redcon.Command) error {
-				if len(cmd.Args) < 1 {
+			Action: func(conn redcon.Conn, cmd redcon.Command) (err error) {
+				if len(cmd.Args) < 2 {
 					return wrongArity
-				}
-
-				arr, err := rawQuery(string(cmd.Args[1]), cmd.Args[2:]...)
-				if err != nil {
-					return err
-				}
-				if len(arr) > 0 {
-					conn.WriteArray(len(arr))
-					for _, item := range arr {
-						b, err := json.Marshal(item)
-						if err != nil {
-							return err
-						}
-						conn.WriteBulk(b)
-					}
+				} else if len(cmd.Args) == 2 {
+					err = writeJsonRows(conn, fmt.Sprintf(`%s`, cmd.Args[1]), nil)
 				} else {
-					conn.WriteNull()
+					err = writeJsonRows(
+						conn,
+						fmt.Sprintf(`%s`, cmd.Args[1]),
+						cmd.Args[2:]...,
+					)
 				}
-				return nil
+				return err
 			},
 		},
 	)
+}
+
+func tableName(b []byte) string {
+	return strings.ReplaceAll(string(b), ".", "_")
+}
+
+func writeJsonRow(conn redcon.Conn, query string, args ...[]byte) error {
+	qs, err := db.QueryRow(query, args...)
+	if err != nil {
+		return err
+	}
+	if len(qs.Rows) == 0 {
+		conn.WriteNull()
+		return nil
+	}
+	b, err := qs.Json(0)
+	if err != nil {
+		return err
+	}
+	conn.WriteBulk(b)
+	return nil
+}
+
+func writeJsonRows(conn redcon.Conn, query string, args ...[]byte) error {
+	qs, err := db.QuerySet(query, args...)
+	if err != nil {
+		return err
+	}
+	if len(qs.Rows) == 0 {
+		conn.WriteNull()
+		return nil
+	}
+	conn.WriteArray(len(qs.Rows))
+	for i := range qs.Rows {
+		b, err := qs.Json(i)
+		if err != nil {
+			return err
+		}
+		conn.WriteBulk(b)
+	}
+	return nil
 }

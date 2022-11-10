@@ -2,11 +2,14 @@ package replica
 
 import (
 	"bytes"
-	"database/sql"
+	"database/sql/driver"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 
 	"github.com/bendersilver/glog"
+	"github.com/bendersilver/pgcache/sqlite"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,7 +20,7 @@ const (
 	plugin   = "pgoutput"
 )
 
-var db *sql.DB
+var db *sqlite.Conn
 var mi = pgtype.NewMap()
 var signature = []byte{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, 0xFF, 0x0D, 0x0A, 0x00}
 
@@ -27,14 +30,29 @@ type replication struct {
 
 	conn      *pgconn.PgConn
 	lsn       pglogrepl.LSN
-	relations map[uint32]*pglogrepl.RelationMessage
+	relations map[uint32]*relationItem
 }
 
 type tmpTable struct {
 	readSign bool
 	dbName   string
 	field    []pgconn.FieldDescription
-	insert   *sql.Stmt
+	insert   *sqlite.Stmt
+}
+
+func readInt32(r io.Reader) int32 {
+	var buf [4]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return 0
+	}
+	return int32(binary.BigEndian.Uint32(buf[:]))
+}
+func readInt16(r io.Reader) int16 {
+	var buf [2]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return 0
+	}
+	return int16(binary.BigEndian.Uint16(buf[:]))
 }
 
 // Write - io.Writer
@@ -62,7 +80,7 @@ func (t *tmpTable) Write(src []byte) (n int, err error) {
 	if tupleLen == -1 {
 		return
 	}
-	vals := make([]any, tupleLen)
+	vals := make([]driver.Value, tupleLen)
 	for i := 0; i < int(tupleLen); i++ {
 		colLen := readInt32(buf)
 		// column is nil
@@ -74,24 +92,34 @@ func (t *tmpTable) Write(src []byte) (n int, err error) {
 		if _, err := io.ReadFull(buf, col); err != nil {
 			return 0, fmt.Errorf("can't read column %v", err)
 		}
-		vals[i], err = t.decodeColumn(pgtype.BinaryFormatCode, t.field[i], col)
+		vals[i], err = decodeColumn(pgtype.BinaryFormatCode, t.field[i].DataTypeOID, col)
 		if err != nil {
 			return 0, err
 		}
 	}
-	_, err = t.insert.Exec(vals...)
+
+	err = t.insert.Exec(vals...)
 	return
 }
 
-func (t *tmpTable) decodeColumn(format int16, f pgconn.FieldDescription, data []byte) (v any, err error) {
-	if dt, ok := mi.TypeForOID(f.DataTypeOID); ok {
-		v, err = dt.Codec.DecodeValue(mi, f.DataTypeOID, format, data)
+func decodeColumn(format int16, oid uint32, data []byte) (v driver.Value, err error) {
+	if dt, ok := mi.TypeForOID(oid); ok {
+		dv, err := dt.Codec.DecodeDatabaseSQLValue(mi, oid, format, data)
 		if err != nil {
 			glog.Errorf("val %s, err: %v", data, err)
 			return nil, err
 		}
-		return converDataType(v, dt.Name)
-	} else {
-		return converDataType(data, "bytea")
+		switch dv.(type) {
+		case []byte, string:
+			v, err = dt.Codec.DecodeValue(mi, oid, format, data)
+			if err != nil {
+				glog.Errorf("val: %s, type: %s, oid: %d, err: %v", data, dt.Name, oid, err)
+				dv, _ = json.Marshal(fmt.Sprintf("%v", dv))
+			} else {
+				dv, err = json.Marshal(v)
+			}
+		}
+		return dv, nil
 	}
+	return decodeColumn(format, 17, data)
 }

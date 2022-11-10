@@ -2,13 +2,33 @@ package pgcache
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/bendersilver/glog"
 	"github.com/tidwall/redcon"
 )
+
+// CmdFunc -
+type CmdFunc func(conn redcon.Conn, cmd redcon.Command) error
+
+// Command -
+type Command struct {
+	Usage  string
+	Desc   string
+	Name   string //This is the command's name in lowercase.
+	Action CmdFunc
+	// Use BuildCommandFLags to generate this flags
+	// Arity is the number of arguments a command expects. It follows a simple pattern:
+
+	// A positive integer means a fixed number of arguments.
+	// A negative integer means a minimal number of arguments.
+	// Command arity always includes the command's name itself (and the subcommand when applicable).
+	Arity                      int
+	Flags                      string
+	FirstKey, LastKey, KeyStep int
+}
 
 func accept(conn redcon.Conn) bool {
 	glog.Debug("connect", conn.RemoteAddr())
@@ -33,12 +53,9 @@ func AddCommand(cmd ...*Command) error {
 	return nil
 }
 
-var mx sync.Mutex
-
 func handler(conn redcon.Conn, cmd redcon.Command) {
-	mx.Lock()
-	defer mx.Unlock()
 	if cm, ok := commands[strings.ToLower(string(cmd.Args[0]))]; ok {
+		conn.SetContext(db)
 		err := cm.Action(conn, cmd)
 		if err != nil {
 			if err != nil {
@@ -49,7 +66,24 @@ func handler(conn redcon.Conn, cmd redcon.Command) {
 			conn.WriteError(err.Error())
 		}
 	} else {
-		glog.Warningf("unknown command `%s`", cmd.Args[0])
-		conn.WriteError(fmt.Sprintf(" ERR unknown command `%s`", cmd.Args[0]))
+		if rdb != nil {
+			arg := make([]any, len(cmd.Args))
+			for i, c := range cmd.Args {
+				arg[i] = c
+			}
+
+			res, err := rdb.Do(context.Background(), arg...).Result()
+			if err != nil {
+				conn.WriteError(err.Error())
+			} else {
+				conn.WriteAny(res)
+			}
+		} else {
+			glog.Warningf("unknown command `%s`", cmd.Args[0])
+			for _, v := range cmd.Args[1:] {
+				glog.Warningf("\targ: %s", v)
+			}
+			conn.WriteError(fmt.Sprintf("ERR unknown command `%s`", cmd.Args[0]))
+		}
 	}
 }
