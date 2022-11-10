@@ -186,10 +186,6 @@ func writeJsonRows(conn redcon.Conn, query string, args ...[]byte) error {
 	if err != nil {
 		return err
 	}
-	if len(qs.Rows) == 0 {
-		conn.WriteNull()
-		return nil
-	}
 	conn.WriteArray(len(qs.Rows))
 	for i := range qs.Rows {
 		b, err := qs.Json(i)

@@ -57,6 +57,8 @@ func TableAdd(opt *AddOptions) error {
 		case pgtype.Int2OID, pgtype.Int4OID, pgtype.Int8OID, pgtype.TimestampOID, pgtype.TimestamptzOID, pgtype.DateOID:
 			create[i] += " INTEGER"
 		case pgtype.NumericOID, pgtype.Float4OID, pgtype.Float8OID:
+			create[i] += " REAL"
+		case pgtype.TextOID, pgtype.VarcharOID, pgtype.NameOID:
 			create[i] += " TEXT"
 		default:
 			create[i] += " BLOB"

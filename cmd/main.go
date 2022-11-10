@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache"
@@ -12,22 +11,28 @@ import (
 )
 
 func main() {
-	err := pgcache.Init(os.Getenv("PG_URL"), &redis.Options{})
+	// glog.Notice(os.Getenv("PG_URL"))
+	err := pgcache.Init("postgresql://7keys:TfHaOw92QMaS9lN15Q@7keys-develop/7keys", &redis.Options{})
 	if err != nil {
 		glog.Fatal(err)
 	}
+	glog.Notice("comm")
 	// err = replica.TableAdd(`pb.temp`, true)
 	// if err != nil {
 	// 	glog.Fatal(err)
 	// }
 	err = replica.TableAdd(&replica.AddOptions{
-		TableName: "pb.users",
+		TableName: "pb.tariff",
 		Init:      true,
-		Query:     "SELECT * FROM pb.users WHERE id > 600",
+	})
+	err = replica.TableAdd(&replica.AddOptions{
+		TableName: "pb.temp",
+		Init:      true,
 	})
 	if err != nil {
 		glog.Fatal(err)
 	}
+	glog.Notice("Add table")
 	// err = replica.TableAdd(`pb.users_base`, true)
 	// if err != nil {
 	// 	glog.Fatal(err)
