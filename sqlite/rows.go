@@ -8,6 +8,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
+// Rows -
 type Rows struct {
 	allocs  []uintptr
 	c       *Conn
@@ -44,6 +45,7 @@ func newRows(c *Conn, pstmt uintptr, allocs []uintptr, empty bool) (r *Rows, err
 	return r, nil
 }
 
+// Close -
 func (r *Rows) Close() (err error) {
 	for _, v := range r.allocs {
 		r.c.free(v)
@@ -52,18 +54,22 @@ func (r *Rows) Close() (err error) {
 	return r.c.finalize(r.pstmt)
 }
 
+// Columns -
 func (r *Rows) Columns() (c []string) {
 	return r.columns
 }
 
-func (r *Rows) Err() error {
-	return r.err
-}
-
+// Values -
 func (r *Rows) Values() ([]any, error) {
 	return r.result, r.err
 }
 
+// Err -
+func (r *Rows) Err() error {
+	return r.err
+}
+
+// Next -
 func (r *Rows) Next() bool {
 	r.result = nil
 	err := r.next()

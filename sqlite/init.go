@@ -24,11 +24,14 @@ func mutexAlloc(tls *libc.TLS) uintptr {
 
 func mutexFree(tls *libc.TLS, m uintptr) { libc.Xfree(tls, m) }
 
+// Error -
 type Error struct {
 	msg  string
 	code int
 }
 
+// Error -
 func (e *Error) Error() string { return e.msg }
 
+// Code -
 func (e *Error) Code() int { return e.code }

@@ -9,12 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// AddOptions -
 type AddOptions struct {
 	TableName string
 	Init      bool
 	Query     string
 }
 
+// TableAdd -
 func TableAdd(opt *AddOptions) error {
 	u, err := url.Parse(r.pgURL)
 	if err != nil {

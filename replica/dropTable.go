@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// TableDrop -
 func TableDrop(name string) error {
 	u, err := url.Parse(r.pgURL)
 	if err != nil {

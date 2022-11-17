@@ -7,7 +7,6 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/bendersilver/glog"
 	"modernc.org/libc"
 	"modernc.org/libc/sys/types"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -219,7 +218,6 @@ func (c *Conn) bind(pstmt uintptr, n int, args []driver.NamedValue) (allocs []ui
 				return allocs, err
 			}
 		default:
-			glog.Debug(x)
 			return allocs, fmt.Errorf("sqlite: invalid driver.Value type %T", x)
 		}
 		if p != 0 {
@@ -421,6 +419,7 @@ func (c *Conn) errstr(rc int32) error {
 	}
 }
 
+// Exec -
 func (c *Conn) Exec(query string, args ...driver.Value) error {
 	return c.exec(query, toNamedValues(args...))
 }
@@ -440,6 +439,7 @@ func (c *Conn) exec(query string, args []driver.NamedValue) error {
 	return s.exec(args)
 }
 
+// Prepare -
 func (c *Conn) Prepare(query string) (*Stmt, error) {
 	return c.prepare(query)
 }
@@ -448,6 +448,7 @@ func (c *Conn) prepare(query string) (*Stmt, error) {
 	return newStmt(c, query)
 }
 
+// Query -
 func (c *Conn) Query(query string, args ...driver.Value) (*Rows, error) {
 	return c.query(query, toNamedValues(args...))
 }
@@ -467,6 +468,7 @@ func (c *Conn) query(query string, args []driver.NamedValue) (r *Rows, err error
 	return s.query(args)
 }
 
+// Close -
 func (c *Conn) Close() error {
 	c.Lock()
 	defer c.Unlock()
@@ -492,6 +494,7 @@ func (c *Conn) closeV2(db uintptr) error {
 	return nil
 }
 
+// Conn -
 type Conn struct {
 	db  uintptr
 	tls *libc.TLS
@@ -523,6 +526,7 @@ func newConn() (*Conn, error) {
 	return c, nil
 }
 
-func NewMemConn() (*Conn, error) {
+// NewConn -
+func NewConn() (*Conn, error) {
 	return newConn()
 }

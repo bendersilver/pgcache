@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 var r replication
@@ -32,7 +31,7 @@ func Run(pgURL string) error {
 
 	r.pgURL = u.String()
 	r.relations = make(map[uint32]*relationItem)
-	db, err = sqlite.NewMemConn()
+	db, err = sqlite.NewConn()
 	if err != nil {
 		glog.Error(err)
 		return err

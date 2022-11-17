@@ -1,64 +1,81 @@
 package main
 
 import (
-	"fmt"
+	"database/sql/driver"
+	"net"
+	"net/rpc"
+	"os"
+	"runtime"
 
 	"github.com/bendersilver/glog"
-	"github.com/bendersilver/pgcache"
 	"github.com/bendersilver/pgcache/replica"
-	"github.com/go-redis/redis/v9"
-	"github.com/tidwall/redcon"
+	"github.com/bendersilver/pgcache/sqlite"
 )
 
-func main() {
-	// glog.Notice(os.Getenv("PG_URL"))
-	err := pgcache.Init("postgresql://7keys:TfHaOw92QMaS9lN15Q@7keys-develop/7keys", &redis.Options{})
-	if err != nil {
-		glog.Fatal(err)
-	}
-	glog.Notice("comm")
-	// err = replica.TableAdd(`pb.temp`, true)
-	// if err != nil {
-	// 	glog.Fatal(err)
-	// }
-	err = replica.TableAdd(&replica.AddOptions{
-		TableName: "pb.tariff",
-		Init:      true,
-	})
-	err = replica.TableAdd(&replica.AddOptions{
-		TableName: "pb.temp",
-		Init:      true,
-	})
-	if err != nil {
-		glog.Fatal(err)
-	}
-	glog.Notice("Add table")
-	// err = replica.TableAdd(`pb.users_base`, true)
-	// if err != nil {
-	// 	glog.Fatal(err)
-	// }
-	// err = replica.TableAdd(`pb.const`, true)
-	// if err != nil {
-	// 	glog.Fatal(err)
-	// }
-	glog.Fatal(pgcache.Start(":6677"))
+var db *sqlite.Conn
+
+// DB -
+type DB struct{}
+
+// Exec -
+func (d *DB) Exec(args *Query, r *int) error {
+	return db.Exec(args.SQL, args.Args...)
 }
 
-var echo = pgcache.Command{
-	Usage:    "ECHO args",
-	Name:     "ECHO",
-	Flags:    "admin write blocking",
-	FirstKey: 1, LastKey: 1, KeyStep: 1,
-	Arity: 2,
-	Action: func(conn redcon.Conn, cmd redcon.Command) error {
-		if len(cmd.Args) < 2 {
-			return fmt.Errorf("wrong number")
+// Query -
+func (d *DB) Query(args *Query, r *[][]any) error {
+	rows, err := db.Query(args.SQL, args.Args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		v, err := rows.Values()
+		if err != nil {
+			return err
 		}
-		cmd.Args = cmd.Args[1:]
-		conn.WriteArray(len(cmd.Args))
-		for _, v := range cmd.Args {
-			conn.WriteBulk(v)
+		*r = append(*r, v)
+	}
+	return rows.Err()
+}
+
+// Query -
+type Query struct {
+	SQL  string
+	Args []driver.Value
+}
+
+const sockAddr = "/tmp/pgcache.sock"
+
+func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	err := replica.Run(os.Getenv("PG_URL"))
+	if err != nil {
+		glog.Fatal(err)
+	}
+	db, err = sqlite.NewConn()
+	if err != nil {
+		glog.Fatal(err)
+	}
+
+	listener, err := net.Listen("unix", sockAddr)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	rpc.Register(new(DB))
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
 		}
-		return nil
-	},
+		go rpc.ServeConn(conn)
+	}
+}
+
+func init() {
+	if err := os.RemoveAll(sockAddr); err != nil {
+		glog.Fatal(err)
+	}
 }

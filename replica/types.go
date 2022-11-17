@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -16,9 +15,15 @@ import (
 )
 
 const (
-	slotName = "pgcache_slot"
-	plugin   = "pgoutput"
+	plugin = "pgoutput"
 )
+
+var slotName = "pgcache_slot"
+
+// SetSlotName -
+func SetSlotName(name string) {
+	slotName = name
+}
 
 var db *sqlite.Conn
 var mi = pgtype.NewMap()
@@ -62,7 +67,7 @@ func (t *tmpTable) Write(src []byte) (n int, err error) {
 	if !t.readSign {
 
 		if !bytes.Equal(buf.Next(len(signature)), signature) {
-			return 0, fmt.Errorf(`invalid file signature: expected PGCOPY\n\377\r\n\0`)
+			return 0, fmt.Errorf("invalid file signature: %s", signature)
 		}
 		flags := readInt32(buf)
 		extensionSize := readInt32(buf)
@@ -109,16 +114,16 @@ func decodeColumn(format int16, oid uint32, data []byte) (v driver.Value, err er
 			glog.Errorf("val %s, err: %v", data, err)
 			return nil, err
 		}
-		switch dv.(type) {
-		case []byte:
-			v, err = dt.Codec.DecodeValue(mi, oid, format, data)
-			if err != nil {
-				glog.Errorf("val: %s, type: %s, oid: %d, err: %v", data, dt.Name, oid, err)
-				dv, _ = json.Marshal(fmt.Sprintf("%v", dv))
-			} else {
-				dv, err = json.Marshal(v)
-			}
-		}
+		// switch dv.(type) {
+		// case []byte:
+		// 	v, err = dt.Codec.DecodeValue(mi, oid, format, data)
+		// 	if err != nil {
+		// 		glog.Errorf("val: %s, type: %s, oid: %d, err: %v", data, dt.Name, oid, err)
+		// 		dv, _ = json.Marshal(fmt.Sprintf("%v", dv))
+		// 	} else {
+		// 		dv, err = json.Marshal(v)
+		// 	}
+		// }
 		return dv, nil
 	}
 	return decodeColumn(format, 17, data)

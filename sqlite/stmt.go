@@ -9,6 +9,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
+// Stmt -
 type Stmt struct {
 	c    *Conn
 	psql uintptr
@@ -24,12 +25,14 @@ func newStmt(c *Conn, sql string) (*Stmt, error) {
 	return &stm, nil
 }
 
+// Close -
 func (s *Stmt) Close() (err error) {
 	s.c.free(s.psql)
 	s.psql = 0
 	return nil
 }
 
+// Exec -
 func (s *Stmt) Exec(args ...driver.Value) error {
 	return s.exec(toNamedValues(args...))
 }
@@ -93,10 +96,12 @@ func (s *Stmt) exec(args []driver.NamedValue) (err error) {
 	return nil
 }
 
+// NumInput -
 func (s *Stmt) NumInput() (n int) {
 	return -1
 }
 
+// Query -
 func (s *Stmt) Query(args ...driver.Value) (*Rows, error) {
 	return s.query(toNamedValues(args...))
 }
