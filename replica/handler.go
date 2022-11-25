@@ -13,6 +13,9 @@ import (
 )
 
 func (r *replication) handle(m *pgproto3.CopyData) error {
+	mx.Lock()
+	defer mx.Unlock()
+
 	xld, err := pglogrepl.ParseXLogData(m.Data[1:])
 	if err != nil {
 		glog.Error(err)

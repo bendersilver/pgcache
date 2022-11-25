@@ -14,6 +14,17 @@ import (
 
 var db *sqlite.Conn
 
+// Query -
+type Query struct {
+	SQL  string
+	Args []driver.Value
+}
+
+type QueryResult struct {
+	ColumnName []string
+	Result     [][]any
+}
+
 // DB -
 type DB struct{}
 
@@ -23,33 +34,29 @@ func (d *DB) Exec(args *Query, r *int) error {
 }
 
 // Query -
-func (d *DB) Query(args *Query, r *[][]any) error {
+func (d *DB) Query(args *Query, r *QueryResult) error {
 	rows, err := db.Query(args.SQL, args.Args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+	r.ColumnName = rows.Columns()
 
 	for rows.Next() {
 		v, err := rows.Values()
 		if err != nil {
 			return err
 		}
-		*r = append(*r, v)
+		r.Result = append(r.Result, v)
 	}
 	return rows.Err()
-}
-
-// Query -
-type Query struct {
-	SQL  string
-	Args []driver.Value
 }
 
 const sockAddr = "/tmp/pgcache.sock"
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	replica.SetSlotName("temp_test_slot")
 	err := replica.Run(os.Getenv("PG_URL"))
 	if err != nil {
 		glog.Fatal(err)
@@ -63,10 +70,12 @@ func main() {
 	if err != nil {
 		glog.Fatal(err)
 	}
+
 	rpc.Register(new(DB))
 
 	for {
 		conn, err := listener.Accept()
+		glog.Notice(conn.RemoteAddr())
 		if err != nil {
 			continue
 		}

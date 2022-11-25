@@ -101,7 +101,7 @@ type Query struct {
 }
 
 func TestConnRPC(t *testing.T) {
-	client, err := rpc.Dial("unix", "/tmp/echo.sock")
+	client, err := rpc.Dial("unix", "/tmp/pgcache.sock")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,5 @@
 test_*.go
+*test.go
 .env
 build.bash
 

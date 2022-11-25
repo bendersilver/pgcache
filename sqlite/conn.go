@@ -511,7 +511,8 @@ func newConn() (*Conn, error) {
 			sqlite3.SQLITE_OPEN_CREATE|
 			sqlite3.SQLITE_OPEN_FULLMUTEX|
 			sqlite3.SQLITE_OPEN_URI|
-			sqlite3.SQLITE_OPEN_SHAREDCACHE,
+			sqlite3.SQLITE_OPEN_SHAREDCACHE|
+			sqlite3.SQLITE_OPEN_MEMORY,
 	)
 	if err != nil {
 		return nil, err

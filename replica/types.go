@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache/sqlite"
@@ -25,6 +26,7 @@ func SetSlotName(name string) {
 	slotName = name
 }
 
+var mx sync.Mutex
 var db *sqlite.Conn
 var mi = pgtype.NewMap()
 var signature = []byte{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, 0xFF, 0x0D, 0x0A, 0x00}
@@ -114,16 +116,6 @@ func decodeColumn(format int16, oid uint32, data []byte) (v driver.Value, err er
 			glog.Errorf("val %s, err: %v", data, err)
 			return nil, err
 		}
-		// switch dv.(type) {
-		// case []byte:
-		// 	v, err = dt.Codec.DecodeValue(mi, oid, format, data)
-		// 	if err != nil {
-		// 		glog.Errorf("val: %s, type: %s, oid: %d, err: %v", data, dt.Name, oid, err)
-		// 		dv, _ = json.Marshal(fmt.Sprintf("%v", dv))
-		// 	} else {
-		// 		dv, err = json.Marshal(v)
-		// 	}
-		// }
 		return dv, nil
 	}
 	return decodeColumn(format, 17, data)
