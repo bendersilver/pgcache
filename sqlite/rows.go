@@ -1,7 +1,6 @@
 package sqlite
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -109,30 +108,31 @@ func (r *Rows) next() (err error) {
 				if err != nil {
 					return err
 				}
+
 				if r.c.columnDeclType(r.pstmt, i) == "BOOLEAN" {
 					r.result[i] = v > 0
 				} else {
 					r.result[i] = v
 				}
+
 			case sqlite3.SQLITE_FLOAT:
-				v, err := r.c.columnDouble(r.pstmt, i)
+				r.result[i], err = r.c.columnDouble(r.pstmt, i)
 				if err != nil {
 					return err
 				}
 
-				r.result[i] = v
 			case sqlite3.SQLITE_TEXT:
-				v, err := r.c.columnText(r.pstmt, i)
+				r.result[i], err = r.c.columnText(r.pstmt, i)
 				if err != nil {
 					return err
 				}
-				r.result[i] = v
+
 			case sqlite3.SQLITE_BLOB:
-				v, err := r.c.columnBlob(r.pstmt, i)
+				r.result[i], err = r.c.columnBlob(r.pstmt, i)
 				if err != nil {
 					return err
 				}
-				r.result[i] = json.RawMessage(v)
+
 			case sqlite3.SQLITE_NULL:
 				r.result[i] = nil
 			default:
