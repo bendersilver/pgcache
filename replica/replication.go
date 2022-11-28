@@ -26,7 +26,7 @@ func Run(pgURL string) error {
 	param := url.Values{}
 	param.Add("sslmode", "require")
 	param.Add("replication", "database")
-	param.Add("application_name", "pgcache_slot")
+	param.Add("application_name", slotName)
 	u.RawQuery = param.Encode()
 
 	r.pgURL = u.String()

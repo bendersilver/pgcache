@@ -30,7 +30,7 @@ func TableAdd(opt *AddOptions) error {
 	}
 	param := url.Values{}
 	param.Add("sslmode", "require")
-	param.Add("application_name", "redispg_copy")
+	param.Add("application_name", slotName)
 	u.RawQuery = param.Encode()
 
 	conn, err := pgconn.Connect(ctx, u.String())
@@ -48,15 +48,15 @@ func TableAdd(opt *AddOptions) error {
 	res, err := conn.Exec(ctx, fmt.Sprintf(`
 		SELECT *
 		FROM pg_catalog.pg_publication_tables
-		WHERE pubname = %s
-			AND schemaname = %s
-			AND tablename = %s;
+		WHERE pubname = '%s'
+			AND schemaname = '%s'
+			AND tablename = '%s';
 		`, slotName, opt.shema, opt.table)).ReadAll()
 	if err != nil {
 		return err
 	}
 	if len(res) > 0 {
-		err = db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, opt.tableName()))
+		err = TableDrop(opt.TableName)
 		if err != nil {
 			return err
 		}
