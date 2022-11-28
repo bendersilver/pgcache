@@ -35,7 +35,7 @@ func TableAdd(opt *AddOptions) error {
 
 	conn, err := pgconn.Connect(ctx, u.String())
 	if err != nil {
-		return err
+		return fmt.Errorf("pg connerct err: %v", err)
 	}
 	defer conn.Close(ctx)
 	args := strings.Split(opt.TableName, ".")
@@ -53,19 +53,19 @@ func TableAdd(opt *AddOptions) error {
 			AND tablename = '%s';
 		`, slotName, opt.shema, opt.table)).ReadAll()
 	if err != nil {
-		return err
+		return fmt.Errorf("pg get pg_publication_tables err: %v", err)
 	}
-	if len(res) > 0 {
+	if len(res) > 0 && res[0].Rows != nil {
 		err = TableDrop(opt.TableName)
 		if err != nil {
-			return err
+			return fmt.Errorf("pg drop publication err: %v", err)
 		}
 	} else {
 		_, err = conn.Exec(ctx, fmt.Sprintf(`
 			ALTER PUBLICATION %s ADD TABLE %s;
 			`, slotName, opt.TableName)).ReadAll()
 		if err != nil {
-			return err
+			return fmt.Errorf("alter publication err: %v", err)
 		}
 	}
 
@@ -75,7 +75,7 @@ func TableAdd(opt *AddOptions) error {
 		nil,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("pg prepare err: %v", err)
 	}
 	var t tmpTable
 	t.field = cmt.Fields
@@ -99,7 +99,7 @@ func TableAdd(opt *AddOptions) error {
 	}
 	err = db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", opt.tableName(), strings.Join(create, ",\n")))
 	if err != nil {
-		return err
+		return fmt.Errorf("sqlite create table err: %v", err)
 	}
 	for i := range create {
 		create[i] = "?"
@@ -107,7 +107,7 @@ func TableAdd(opt *AddOptions) error {
 
 	t.insert, err = db.Prepare(fmt.Sprintf("INSERT INTO %s VALUES (%s);", opt.tableName(), strings.Join(create, ", ")))
 	if err != nil {
-		return err
+		return fmt.Errorf("sqlite prepare err: %v", err)
 	}
 	defer t.insert.Close()
 
@@ -121,7 +121,7 @@ func TableAdd(opt *AddOptions) error {
 			_, err = conn.CopyTo(ctx, &t, "COPY BINARY "+t.dbName+" TO STDOUT;")
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("copy err: %v", err)
 		}
 	}
 
