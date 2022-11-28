@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 	"os"
 	"runtime"
+	"sync"
 
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache/replica"
@@ -20,21 +21,28 @@ type Query struct {
 	Args []driver.Value
 }
 
+// QueryResult -
 type QueryResult struct {
 	ColumnName []string
 	Result     [][]any
 }
 
 // DB -
-type DB struct{}
+type DB struct {
+	sync.Mutex
+}
 
 // Exec -
 func (d *DB) Exec(args *Query, r *int) error {
+	d.Lock()
+	defer d.Unlock()
 	return db.Exec(args.SQL, args.Args...)
 }
 
 // Query -
 func (d *DB) Query(args *Query, r *QueryResult) error {
+	d.Lock()
+	defer d.Unlock()
 	rows, err := db.Query(args.SQL, args.Args...)
 	if err != nil {
 		return err

@@ -12,9 +12,14 @@ import (
 // AddOptions -
 type AddOptions struct {
 	TableName string
-	Reset     bool
 	InitData  bool
 	Query     string
+	shema     string
+	table     string
+}
+
+func (o *AddOptions) tableName() string {
+	return fmt.Sprintf("%s_%s", o.shema, o.table)
 }
 
 // TableAdd -
@@ -33,9 +38,32 @@ func TableAdd(opt *AddOptions) error {
 		return err
 	}
 	defer conn.Close(ctx)
+	args := strings.Split(opt.TableName, ".")
+	if len(args) != 2 {
+		return fmt.Errorf("wrong format table. TableName format `<shema>.<table_name>`")
+	}
+	opt.shema = args[0]
+	opt.table = args[1]
 
-	if !opt.Reset {
-		_, err = conn.Exec(ctx, "ALTER PUBLICATION "+slotName+" ADD TABLE "+opt.TableName).ReadAll()
+	res, err := conn.Exec(ctx, fmt.Sprintf(`
+		SELECT *
+		FROM pg_catalog.pg_publication_tables
+		WHERE pubname = %s
+			AND schemaname = %s
+			AND tablename = %s;
+		`, slotName, opt.shema, opt.table)).ReadAll()
+	if err != nil {
+		return err
+	}
+	if len(res) > 0 {
+		err = db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, opt.tableName()))
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err = conn.Exec(ctx, fmt.Sprintf(`
+			ALTER PUBLICATION %s ADD TABLE %s;
+			`, slotName, opt.TableName)).ReadAll()
 		if err != nil {
 			return err
 		}
@@ -43,7 +71,7 @@ func TableAdd(opt *AddOptions) error {
 
 	cmt, err := conn.Prepare(ctx,
 		opt.TableName,
-		"SELECT * FROM "+opt.TableName+" LIMIT 1",
+		fmt.Sprintf(`SELECT * FROM %s LIMIT 1;`, opt.TableName),
 		nil,
 	)
 	if err != nil {
@@ -69,8 +97,7 @@ func TableAdd(opt *AddOptions) error {
 			create[i] += " BLOB"
 		}
 	}
-	dbName := strings.ReplaceAll(opt.TableName, ".", "_")
-	err = db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", dbName, strings.Join(create, ",\n")))
+	err = db.Exec(fmt.Sprintf("CREATE TABLE %s (\n%s\n);", opt.tableName(), strings.Join(create, ",\n")))
 	if err != nil {
 		return err
 	}
@@ -78,7 +105,7 @@ func TableAdd(opt *AddOptions) error {
 		create[i] = "?"
 	}
 
-	t.insert, err = db.Prepare(fmt.Sprintf("INSERT INTO %s VALUES (%s);", dbName, strings.Join(create, ", ")))
+	t.insert, err = db.Prepare(fmt.Sprintf("INSERT INTO %s VALUES (%s);", opt.tableName(), strings.Join(create, ", ")))
 	if err != nil {
 		return err
 	}
