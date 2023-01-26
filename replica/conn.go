@@ -11,12 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// Options -
 type Options struct {
 	PgURL     string
 	SlotName  string
 	TableName string
 }
 
+type sqliteTable struct {
+	name     string
+	cleanSQL string
+	timeot   int
+	pk       string
+}
+
+// Conn -
 type Conn struct {
 	db *sqlite.Conn
 
@@ -24,8 +33,11 @@ type Conn struct {
 	conn      *pgconn.PgConn
 	lsn       pglogrepl.LSN
 	relations map[uint32]*relationItem
+
+	table []sqliteTable
 }
 
+// NewConn -
 func NewConn(opt *Options) (*Conn, error) {
 	if opt.PgURL == "" {
 		return nil, fmt.Errorf("PgURL not set")
@@ -140,6 +152,7 @@ func (c *Conn) startReplication() error {
 	)
 }
 
+// Close -
 func (c *Conn) Close() error {
 	err := c.drop()
 	if err != nil {
