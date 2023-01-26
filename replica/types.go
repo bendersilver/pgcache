@@ -29,7 +29,6 @@ func SetSlotName(name string) {
 var mx sync.Mutex
 var db *sqlite.Conn
 var mi = pgtype.NewMap()
-var signature = []byte{0x50, 0x47, 0x43, 0x4F, 0x50, 0x59, 0x0A, 0xFF, 0x0D, 0x0A, 0x00}
 
 // replication -
 type replication struct {
