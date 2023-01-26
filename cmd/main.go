@@ -27,6 +27,12 @@ func main() {
 		glog.Fatal(err)
 	}
 
+	select {
+	case <-c.ErrCH:
+		// glog.Error(e)
+	}
+	// c.ErrCH
+
 	glog.Error(c.Close())
 }
 

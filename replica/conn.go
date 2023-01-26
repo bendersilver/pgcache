@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache/sqlite"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var ctx = context.Background()
+var mi = pgtype.NewMap()
 
 // Options -
 type Options struct {
@@ -27,14 +33,15 @@ type sqliteTable struct {
 
 // Conn -
 type Conn struct {
-	db *sqlite.Conn
+	ErrCH chan error
+	db    *sqlite.Conn
+	dbURL string
 
 	opt       *Options
+	conDB     *pgconn.PgConn
 	conn      *pgconn.PgConn
 	lsn       pglogrepl.LSN
-	relations map[uint32]*relationItem
-
-	table []sqliteTable
+	relations map[uint32]*relTable
 }
 
 // NewConn -
@@ -57,8 +64,15 @@ func NewConn(opt *Options) (*Conn, error) {
 	u.RawQuery = param.Encode()
 
 	var c Conn
+	c.ErrCH = make(chan error, 0)
+	c.relations = make(map[uint32]*relTable)
 	c.opt = opt
 	c.conn, err = pgconn.Connect(context.Background(), u.String())
+	if err != nil {
+		return nil, err
+	}
+	param.Del("replication")
+	c.conDB, err = pgconn.Connect(context.Background(), u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -74,9 +88,9 @@ func NewConn(opt *Options) (*Conn, error) {
 	}
 
 	err = c.drop()
-	// if err != nil {
-	// 	return nil, err
-	// }
+	if err != nil {
+		glog.Warning(err)
+	}
 
 	err = c.start()
 	if err != nil {
@@ -88,7 +102,78 @@ func NewConn(opt *Options) (*Conn, error) {
 		return nil, err
 	}
 
+	go c.run()
+
 	return &c, nil
+}
+
+func (c *Conn) run() error {
+	c.lsn = pglogrepl.LSN(0)
+	err := c.startReplication()
+	if err != nil {
+		return err
+	}
+	timeout := time.Second * 10
+	nextStandbyMessageDeadline := time.Now().Add(timeout)
+	for {
+
+		if time.Now().After(nextStandbyMessageDeadline) {
+			err = pglogrepl.SendStandbyStatusUpdate(
+				ctx,
+				c.conn,
+				pglogrepl.StandbyStatusUpdate{
+					WALWritePosition: c.lsn,
+				},
+			)
+
+			if err != nil {
+				glog.Error(err)
+				return err
+			}
+			nextStandbyMessageDeadline = time.Now().Add(timeout)
+		}
+
+		ctx, cancel := context.WithDeadline(context.Background(), nextStandbyMessageDeadline)
+		rawMsg, err := c.conn.ReceiveMessage(ctx)
+		cancel()
+
+		if err != nil {
+			if pgconn.Timeout(err) {
+				continue
+			}
+			return err
+		}
+
+		if rawMsg == nil {
+			return fmt.Errorf("replication failed: nil message received, should not happen")
+		}
+
+		if errMsg, ok := rawMsg.(*pgproto3.ErrorResponse); ok {
+			glog.Critical(errMsg)
+			// restart
+			return fmt.Errorf("received Postgres WAL error: %+v", errMsg)
+		}
+
+		msg, ok := rawMsg.(*pgproto3.CopyData)
+		if !ok {
+			glog.Warning("replication received unexpected message: %T\n", msg)
+			continue
+		}
+
+		switch msg.Data[0] {
+		case pglogrepl.PrimaryKeepaliveMessageByteID:
+			pkm, err := pglogrepl.ParsePrimaryKeepaliveMessage(msg.Data[1:])
+			if err != nil {
+				glog.Error(err)
+				return err
+			}
+			if pkm.ReplyRequested {
+				nextStandbyMessageDeadline = time.Time{}
+			}
+		case pglogrepl.XLogDataByteID:
+			c.handle(msg)
+		}
+	}
 }
 
 func (c *Conn) drop() error {
