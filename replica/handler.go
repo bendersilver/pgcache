@@ -41,7 +41,7 @@ func (c *Conn) handle(m *pgproto3.CopyData) error {
 				if err != nil {
 					glog.Error(err)
 				} else if rel.pgName == c.opt.TableName {
-					err = c.copyTable(string(msg.Tuple.Columns[0].Data),
+					err = c.alterPub(string(msg.Tuple.Columns[0].Data),
 						string(msg.Tuple.Columns[1].Data),
 						string(msg.Tuple.Columns[2].Data))
 					if err != nil {

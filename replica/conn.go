@@ -38,7 +38,6 @@ type Conn struct {
 	dbURL string
 
 	opt       *Options
-	conDB     *pgconn.PgConn
 	conn      *pgconn.PgConn
 	lsn       pglogrepl.LSN
 	relations map[uint32]*relTable
@@ -67,22 +66,12 @@ func NewConn(opt *Options) (*Conn, error) {
 	c.ErrCH = make(chan error, 0)
 	c.relations = make(map[uint32]*relTable)
 	c.opt = opt
-	c.conn, err = pgconn.Connect(context.Background(), u.String())
-	if err != nil {
-		return nil, err
-	}
-	param.Del("replication")
-	c.conDB, err = pgconn.Connect(context.Background(), u.String())
+	c.conn, err = pgconn.Connect(ctx, u.String())
 	if err != nil {
 		return nil, err
 	}
 
 	c.db, err = sqlite.NewConn()
-	if err != nil {
-		return nil, err
-	}
-
-	err = c.createTableRule()
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +86,7 @@ func NewConn(opt *Options) (*Conn, error) {
 		return nil, err
 	}
 
-	err = c.copy()
+	err = c.copyAllTable()
 	if err != nil {
 		return nil, err
 	}
