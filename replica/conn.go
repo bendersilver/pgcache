@@ -24,13 +24,6 @@ type Options struct {
 	TableName string
 }
 
-type sqliteTable struct {
-	name     string
-	cleanSQL string
-	timeot   int
-	pk       string
-}
-
 // Conn -
 type Conn struct {
 	ErrCH chan error
@@ -91,9 +84,29 @@ func NewConn(opt *Options) (*Conn, error) {
 		return nil, err
 	}
 
+	go c.cleaner()
 	go c.run()
 
 	return &c, nil
+}
+
+func (c *Conn) cleaner() {
+	var t *relTable
+	var err error
+	for range time.Tick(time.Second) {
+		for _, t = range c.relations {
+			if t.cleanSQL != "" {
+				if t.dec == 0 {
+					err = c.db.Exec(t.cleanSQL)
+					if err != nil {
+						glog.Error(err)
+					}
+					t.dec = t.cleanTimeout
+				}
+				t.dec--
+			}
+		}
+	}
 }
 
 func (c *Conn) run() error {

@@ -28,26 +28,28 @@ func (c *Conn) dropPub(conn *pgconn.PgConn, t *relTable) (err error) {
 			t.insert.Close()
 		}
 		delete(c.relations, t.oid)
-	}
-	if conn == nil {
-		conn, err = c.newConn()
-		if err != nil {
-			return err
-		}
-		defer conn.Close(ctx)
-	}
 
-	err = conn.Exec(ctx, fmt.Sprintf(`
+		if conn == nil {
+			conn, err = c.newConn()
+			if err != nil {
+				return err
+			}
+			defer conn.Close(ctx)
+		}
+
+		err = conn.Exec(ctx, fmt.Sprintf(`
 			ALTER PUBLICATION %s DROP TABLE %s;
 			`, c.opt.SlotName, t.pgName)).Close()
 
-	if err != nil {
-		glog.Warning(err)
+		if err != nil {
+			glog.Warning(err)
+		}
+		return c.db.Exec("DROP TABLE IF EXISTS " + t.sqliteName)
 	}
-	return c.db.Exec("DROP TABLE IF EXISTS " + t.sqliteName)
+	return
 }
 
-func (c *Conn) alterPub(sheme, table, sql string) error {
+func (c *Conn) alterPub(sheme, table string) error {
 	conn, err := c.newConn()
 	if err != nil {
 		return err
@@ -58,6 +60,37 @@ func (c *Conn) alterPub(sheme, table, sql string) error {
 	var t relTable
 	t.pgName = fmt.Sprintf("%s.%s", sheme, table)
 	t.sqliteName = fmt.Sprintf("%s_%s", sheme, table)
+
+	res, err := conn.Exec(ctx,
+		fmt.Sprintf(`
+		SELECT initsql, cleansql, cleantimeout
+		FROM %s
+		WHERE sheme_name = '%s' AND table_name = '%s';`,
+			c.opt.TableName, sheme, table,
+		),
+	).ReadAll()
+
+	if err != nil {
+		return err
+	}
+
+	var sql string
+	if len(res) > 0 {
+		row := res[0].Rows[0]
+		sql = string(row[0])
+		if len(row[1]) > 0 {
+			t.cleanSQL = string(row[1])
+			i, err := strconv.Atoi(string(row[2]))
+			if err != nil {
+				glog.Error(err)
+				t.cleanTimeout = 60
+			} else {
+				t.cleanTimeout = uint32(i)
+			}
+		}
+	} else {
+		return fmt.Errorf("table '%s': no rows in result set", t.pgName)
+	}
 
 	err = c.dropPub(conn, &t)
 	if err != nil {
@@ -97,9 +130,9 @@ func (c *Conn) copyTable(conn *pgconn.PgConn, t *relTable, sql string) error {
 			u64, err = parseInt(v[0]) // tableOID
 			if err != nil {
 				return err
-			} else {
-				t.oid = uint32(u64)
 			}
+			t.oid = uint32(u64)
+
 			var f fieldDescription
 			t.columnNum++
 			t.field[i] = &f
@@ -110,9 +143,8 @@ func (c *Conn) copyTable(conn *pgconn.PgConn, t *relTable, sql string) error {
 			u64, err = parseInt(v[2]) // tableOID
 			if err != nil {
 				return err
-			} else {
-				f.oid = uint32(u64)
 			}
+			f.oid = uint32(u64)
 
 			f.isPrimary, err = strconv.ParseBool(string(v[4]))
 			if err != nil {
@@ -156,15 +188,13 @@ func (c *Conn) copyTable(conn *pgconn.PgConn, t *relTable, sql string) error {
 
 	t.delete, err = c.db.Prepare(
 		fmt.Sprintf("DELETE FROM %s WHERE (%s) IN (VALUES(%s));",
-			t.sqliteName, strings.Join(pk, ", "), strings.Trim(strings.Repeat("?, ", t.columnNum), ", "),
+			t.sqliteName, strings.Join(pk, ", "), strings.Trim(strings.Repeat("?, ", len(pk)), ", "),
 		))
 	if err != nil {
 		return err
 	}
 
 	c.relations[t.oid] = t
-
-	glog.Info("copy", t.sqliteName)
 
 	if sql == "*" {
 		sql = fmt.Sprintf("SELECT * FROM %s", t.pgName)
@@ -179,8 +209,7 @@ func parseInt(b []byte) (uint64, error) {
 }
 
 type relTable struct {
-	readSign    bool
-	firstRelMsg bool
+	readSign bool
 
 	pgName     string
 	sqliteName string
@@ -189,6 +218,10 @@ type relTable struct {
 	field      []*fieldDescription
 	insert     *sqlite.Stmt
 	delete     *sqlite.Stmt
+
+	cleanSQL     string
+	cleanTimeout uint32
+	dec          uint32
 }
 
 type fieldDescription struct {

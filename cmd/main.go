@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -32,7 +33,6 @@ func main() {
 	}
 
 	var s http.Server
-	s.Addr = os.Getenv("HOST")
 
 	db, err := sqlite.NewConn()
 	if err != nil {
@@ -63,19 +63,17 @@ func main() {
 		defer rows.Close()
 
 		var response struct {
-			Cols []string
-			Vals []any
+			ColumnName []string
+			Result     [][]any
 		}
-		response.Cols = rows.Columns()
+		response.ColumnName = rows.Columns()
 
-		var vals []any
 		for rows.Next() {
-			vals, err = rows.Values()
-			glog.Debug(vals)
+			vals, err := rows.Values()
 			if err != nil {
 				break
 			}
-			response.Vals = append(response.Vals, vals)
+			response.Result = append(response.Result, vals)
 		}
 		if rows.Err() != nil {
 			json.NewEncoder(w).Encode(map[string]any{
@@ -89,7 +87,12 @@ func main() {
 
 	var sError = make(chan error)
 	go func() {
-		sError <- s.ListenAndServe()
+		os.RemoveAll(os.Getenv("SOCK"))
+		ux, err := net.Listen("unix", os.Getenv("SOCK"))
+		if err != nil {
+			glog.Fatal(err)
+		}
+		sError <- s.Serve(ux)
 	}()
 
 	select {

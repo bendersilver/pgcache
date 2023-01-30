@@ -65,7 +65,7 @@ func (c *Conn) copyAllTable() error {
 	}
 
 	res, err := conn.Exec(ctx,
-		fmt.Sprintf(`SELECT sheme_name, table_name, initsql, cleansql, cleantimeout
+		fmt.Sprintf(`SELECT sheme_name, table_name
 		FROM %s`, c.opt.TableName,
 		),
 	).ReadAll()
@@ -76,7 +76,7 @@ func (c *Conn) copyAllTable() error {
 
 	if len(res) > 0 {
 		for _, row := range res[0].Rows {
-			err = c.alterPub(string(row[0]), string(row[1]), string(row[2]))
+			err = c.alterPub(string(row[0]), string(row[1]))
 			if err != nil {
 				glog.Warning(err)
 			}

@@ -1,6 +1,9 @@
 package replica
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/bendersilver/glog"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgproto3"
@@ -23,69 +26,90 @@ func (c *Conn) handle(m *pgproto3.CopyData) error {
 
 	switch msg := msg.(type) {
 	case *pglogrepl.RelationMessage:
-		if tb, ok := c.relations[msg.RelationID]; ok {
-			if !tb.firstRelMsg {
-				tb.firstRelMsg = true
-				return nil
-			}
-		}
-		glog.Errorf("%+v", msg)
-
-	case *pglogrepl.InsertMessage:
 		if rel, ok := c.relations[msg.RelationID]; ok {
-			tuple, err := rel.decodeTuple(msg.Tuple)
-			if err != nil {
-				glog.Error(err)
-			} else {
-				err = rel.insert.Exec(tuple...)
+			var restore bool
+			if rel.pgName != fmt.Sprintf("%s.%s", msg.Namespace, msg.RelationName) {
+				restore = true
+			} else if len(rel.field) != len(msg.Columns) {
+				restore = true
+			}
+			for i := 0; i < int(msg.ColumnNum); i++ {
+				if msg.Columns[i].Name != rel.field[i].name {
+					restore = true
+					break
+				} else if msg.Columns[i].DataType != rel.field[i].oid {
+					restore = true
+					break
+				} else if msg.Columns[i].Flags == 1 && !rel.field[i].isPrimary {
+					restore = true
+					break
+				}
+			}
+			if restore {
+				err = c.dropPub(nil, rel)
 				if err != nil {
 					glog.Error(err)
-				} else if rel.pgName == c.opt.TableName {
-					err = c.alterPub(string(msg.Tuple.Columns[0].Data),
-						string(msg.Tuple.Columns[1].Data),
-						string(msg.Tuple.Columns[2].Data))
-					if err != nil {
-						glog.Error(err)
-					}
 				}
+				err = c.alterPub(msg.Namespace, msg.RelationName)
+				if err != nil {
+					glog.Error(err)
+				}
+			}
+
+		} else {
+			glog.Errorf("new table %+v", msg)
+		}
+
+	case *pglogrepl.InsertMessage:
+		ok, err := c.rowAction(msg.RelationID, msg.Tuple, false)
+		if err != nil {
+			glog.Error(err)
+		} else if ok {
+			glog.Noticef("add table %s.%s", msg.Tuple.Columns[0].Data, msg.Tuple.Columns[1].Data)
+			err = c.alterPub(string(msg.Tuple.Columns[0].Data), string(msg.Tuple.Columns[1].Data))
+			if err != nil {
+				glog.Error(err)
 			}
 		}
 
 	case *pglogrepl.UpdateMessage:
-		rel, ok := c.relations[msg.RelationID]
-		glog.Notice(rel, ok)
-		// if !ok {
-		// 	glog.Error("pglogrepl.UpdateMessage.id %d not found", msg.RelationID)
-		// } else {
-		// 	err = rel.updateMsg(msg)
-		// 	if err != nil {
-		// 		glog.Error(err)
-		// 	}
-		// }
+		_, err = c.rowAction(msg.RelationID, msg.OldTuple, true)
+		if err != nil {
+			glog.Error(err)
+		}
+
+		_, err := c.rowAction(msg.RelationID, msg.NewTuple, false)
+		if err != nil {
+			glog.Error(err)
+		}
 
 	case *pglogrepl.DeleteMessage:
-		// rel, ok := r.relations[msg.RelationID]
-		// if !ok {
-		// 	glog.Error("pglogrepl.DeleteMessage.id %d not found", msg.RelationID)
-		// } else {
-		// 	err = rel.deleteMsg(msg)
-		// 	if err != nil {
-		// 		glog.Error(err)
-		// 	}
-		// }
+		ok, err := c.rowAction(msg.RelationID, msg.OldTuple, true)
+		if err != nil {
+			glog.Error(err)
+		} else if ok {
+			pgName := fmt.Sprintf("%s.%s", msg.OldTuple.Columns[0].Data, msg.OldTuple.Columns[1].Data)
+			glog.Noticef("drop table %s", pgName)
+			for _, t := range c.relations {
+				if t.pgName == pgName {
+					err = c.dropPub(nil, t)
+					if err != nil {
+						glog.Error(err)
+					}
+					break
+				}
+			}
+		}
 
 	case *pglogrepl.TruncateMessage:
-		// for _, relID := range msg.RelationIDs {
-		// 	rel, ok := r.relations[relID]
-		// 	if !ok {
-		// 		glog.Error("pglogrepl.TruncateMessage.id %d not found", relID)
-		// 	} else {
-		// 		err = rel.deleteAll()
-		// 		if err != nil {
-		// 			glog.Error(err)
-		// 		}
-		// 	}
-		// }
+		for _, relID := range msg.RelationIDs {
+			if rel, ok := c.relations[relID]; ok {
+				err = c.db.Exec(fmt.Sprintf("DELETE FROM %s;", rel.sqliteName))
+				if err != nil {
+					glog.Error(err)
+				}
+			}
+		}
 
 	case *pglogrepl.BeginMessage:
 	case *pglogrepl.CommitMessage:
@@ -95,142 +119,49 @@ func (c *Conn) handle(m *pgproto3.CopyData) error {
 	return nil
 }
 
-// type relationItem struct {
-// 	msg       *pglogrepl.RelationMessage
-// 	tableName string
-// 	pkIx      int
-// 	insert    *sqlite.Stmt
-// 	update    *sqlite.Stmt
-// 	delete    *sqlite.Stmt
-// 	truncate  *sqlite.Stmt
-// }
+func (c *Conn) getRelTable(pgName string) *relTable {
+	for _, t := range c.relations {
+		if t.pgName == pgName {
+			return t
+		}
+	}
+	return nil
+}
 
-// func newRrelationItem(m *pglogrepl.RelationMessage) (ri *relationItem, err error) {
-// 	ri = new(relationItem)
-// 	ri.msg = m
-// 	ri.tableName = fmt.Sprintf("%s_%s", m.Namespace, m.RelationName)
-// 	names := make([]string, len(m.Columns))
-// 	params := make([]string, len(m.Columns))
-// 	for i, c := range m.Columns {
-// 		if c.Flags == 1 {
-// 			ri.pkIx = i
-// 		}
-// 		names[i] = c.Name
-// 		params[i] = "?"
-// 	}
-// 	sql := fmt.Sprintf("INSERT OR IGNORE INTO %s(%s) VALUES (%s);",
-// 		ri.tableName,
-// 		strings.Join(names, " ,"),
-// 		strings.Join(params, " ,"),
-// 	)
-// 	ri.insert, err = db.Prepare(sql)
-// 	if err != nil {
-// 		glog.Error(err)
-// 		return
-// 	}
-
-// 	sql = fmt.Sprintf("DELETE FROM %s WHERE %s = ?;",
-// 		ri.tableName,
-// 		m.Columns[ri.pkIx].Name,
-// 	)
-// 	ri.delete, err = db.Prepare(sql)
-// 	if err != nil {
-// 		glog.Error(err)
-// 		return
-// 	}
-
-// 	ri.truncate, err = db.Prepare(fmt.Sprintf("DELETE FROM %s;", ri.tableName))
-// 	if err != nil {
-// 		glog.Error(err)
-// 		return
-// 	}
-
-// 	for i, v := range names {
-// 		params[i] = v + " = ?"
-// 	}
-// 	sql = fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?;",
-// 		ri.tableName,
-// 		strings.Join(params, " ,"),
-// 		m.Columns[ri.pkIx].Name,
-// 	)
-// 	ri.update, err = db.Prepare(sql)
-// 	return
-// }
-
-// func (ri *relationItem) updateMsg(msg *pglogrepl.UpdateMessage) error {
-// 	var pk driver.Value
-// 	if msg.OldTuple != nil {
-// 		tuple, err := ri.decodeTuple(msg.OldTuple)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		for i, c := range ri.msg.Columns {
-// 			if c.Flags == 1 {
-// 				pk = tuple[i]
-// 				break
-// 			}
-// 		}
-// 	}
-// 	if msg.NewTuple != nil {
-// 		tuple, err := ri.decodeTuple(msg.NewTuple)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		if pk == nil {
-// 			pk = tuple[ri.pkIx]
-// 		}
-// 		tuple = append(tuple, pk)
-// 		return ri.update.Exec(tuple...)
-// 	}
-
-// 	return nil
-// }
-
-// func (ri *relationItem) deleteAll() error {
-// 	return ri.truncate.Exec()
-// }
-
-// func (ri *relationItem) deleteMsg(msg *pglogrepl.DeleteMessage) error {
-// 	if msg.OldTuple != nil {
-// 		tuple, err := ri.decodeTuple(msg.OldTuple)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		return ri.delete.Exec(tuple[ri.pkIx])
-// 	}
-
-// 	return nil
-// }
-
-// func (ri *relationItem) insertMsg(msg *pglogrepl.InsertMessage) error {
-// 	if msg.Tuple != nil {
-
-// 		tuple, err := ri.decodeTuple(msg.Tuple)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		return ri.insert.Exec(tuple...)
-// 	}
-// 	return nil
-// }
-
-// func (ri *relationItem) decodeTuple(tuple *pglogrepl.TupleData) (vals []driver.Value, err error) {
-// 	cols := ri.msg.Columns
-// 	vals = make([]driver.Value, len(cols))
-// 	for ix, col := range tuple.Columns {
-// 		rc := cols[ix]
-// 		switch col.DataType {
-// 		case 'n':
-// 			vals[ix] = nil
-// 		case 'u': // unchanged toast
-// 			// This TOAST value was not changed. TOAST values are not stored in the tuple, and logical replication doesn't want to spend a disk read to fetch its value for you.
-// 		case 't': //text
-// 			vals[ix], err = decodeColumn(pgtype.TextFormatCode, rc.DataType, col.Data)
-// 			if err != nil {
-// 				glog.Error(err)
-// 				return nil, err
-// 			}
-// 		}
-// 	}
-// 	return
-// }
+func (c *Conn) rowAction(relID uint32, pgTuple *pglogrepl.TupleData, del bool) (bool, error) {
+	if pgTuple == nil {
+		return false, nil
+	}
+	if rel, ok := c.relations[relID]; ok {
+		ruleTable := rel.pgName == c.opt.TableName
+		tuple, err := rel.decodeTuple(pgTuple)
+		if err != nil {
+			return false, err
+		}
+		if del {
+			var args []driver.Value
+			for i, f := range rel.field {
+				if f.isPrimary {
+					args = append(args, tuple[i])
+				}
+			}
+			return ruleTable, rel.delete.Exec(args...)
+		}
+		if ruleTable {
+			if tuple[3] == nil {
+				rel.cleanSQL = ""
+			} else {
+				rel.cleanSQL = fmt.Sprintf("%s", pgTuple.Columns[3].Data)
+				i, err := pgTuple.Columns[4].Int64()
+				if err != nil {
+					glog.Error(err)
+					rel.cleanTimeout = 60
+				} else {
+					rel.cleanTimeout = uint32(i)
+				}
+			}
+		}
+		return ruleTable, rel.insert.Exec(tuple...)
+	}
+	return false, nil
+}
