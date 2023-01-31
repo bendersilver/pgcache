@@ -48,3 +48,31 @@ WantedBy=multi-user.target
 ```
 
 
+
+
+nginx.conf
+```
+upstream datasette {
+        server unix:<SOCK>;
+}
+
+server {
+    ....
+    ....
+
+    location /pgcache {
+        satisfy any;
+
+        allow <ip>;
+        allow <ip>;
+        deny  all;
+
+        proxy_pass http://datasette;
+        proxy_set_header Host $host;
+    }
+    ...
+    ...
+
+}
+
+```
