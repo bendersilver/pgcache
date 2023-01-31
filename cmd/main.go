@@ -2,97 +2,107 @@ package main
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"net"
-	"net/rpc"
+	"net/http"
 	"os"
 	"runtime"
-	"sync"
 
 	"github.com/bendersilver/glog"
 	"github.com/bendersilver/pgcache/replica"
 	"github.com/bendersilver/pgcache/sqlite"
+	"github.com/joho/godotenv"
 )
-
-var db *sqlite.Conn
-
-// Query -
-type Query struct {
-	SQL  string
-	Args []driver.Value
-}
-
-// QueryResult -
-type QueryResult struct {
-	ColumnName []string
-	Result     [][]any
-}
-
-// DB -
-type DB struct {
-	sync.Mutex
-}
-
-// Exec -
-func (d *DB) Exec(args *Query, r *int) error {
-	d.Lock()
-	defer d.Unlock()
-	return db.Exec(args.SQL, args.Args...)
-}
-
-// Query -
-func (d *DB) Query(args *Query, r *QueryResult) error {
-	d.Lock()
-	defer d.Unlock()
-	rows, err := db.Query(args.SQL, args.Args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	r.ColumnName = rows.Columns()
-
-	for rows.Next() {
-		v, err := rows.Values()
-		if err != nil {
-			return err
-		}
-		r.Result = append(r.Result, v)
-	}
-	return rows.Err()
-}
-
-const sockAddr = "/tmp/pgcache.sock"
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	replica.SetSlotName("temp_test_slot")
-	err := replica.Run(os.Getenv("PG_URL"))
-	if err != nil {
+
+	godotenv.Load()
+	if err := os.RemoveAll(os.Getenv("SOCK")); err != nil {
 		glog.Fatal(err)
 	}
-	db, err = sqlite.NewConn()
+
+	c, err := replica.NewConn(&replica.Options{
+		PgURL:     os.Getenv("PG_URL"),
+		SlotName:  os.Getenv("SLOT"),
+		TableName: os.Getenv("TABLE"),
+	})
+
 	if err != nil {
 		glog.Fatal(err)
 	}
 
-	listener, err := net.Listen("unix", sockAddr)
+	var s http.Server
+
+	db, err := sqlite.NewConn()
 	if err != nil {
 		glog.Fatal(err)
 	}
-
-	rpc.Register(new(DB))
-
-	for {
-		conn, err := listener.Accept()
-		glog.Notice(conn.RemoteAddr())
-		if err != nil {
-			continue
+	s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Sql  string
+			Args []driver.Value
 		}
-		go rpc.ServeConn(conn)
-	}
-}
+		err := json.NewDecoder(r.Body).Decode(&body)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": 500,
+				"error":  err.Error(),
+			})
+			return
+		}
 
-func init() {
-	if err := os.RemoveAll(sockAddr); err != nil {
-		glog.Fatal(err)
+		rows, err := db.Query(body.Sql, body.Args...)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": 500,
+				"error":  err.Error(),
+			})
+			return
+		}
+		defer rows.Close()
+
+		var response struct {
+			ColumnName []string
+			Result     [][]any
+		}
+		response.ColumnName = rows.Columns()
+
+		for rows.Next() {
+			vals, err := rows.Values()
+			if err != nil {
+				break
+			}
+			response.Result = append(response.Result, vals)
+		}
+		if rows.Err() != nil {
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": 500,
+				"error":  err.Error(),
+			})
+		} else {
+			json.NewEncoder(w).Encode(&response)
+		}
+	})
+
+	var sError = make(chan error)
+	go func() {
+		os.RemoveAll(os.Getenv("SOCK"))
+		ux, err := net.Listen("unix", os.Getenv("SOCK"))
+		if err != nil {
+			glog.Fatal(err)
+		}
+		sError <- s.Serve(ux)
+	}()
+
+	select {
+	case err = <-c.ErrCH:
+		s.Close()
+	case err = <-sError:
+		c.Close()
+		// glog.Error(e)
 	}
+	// c.ErrCH
+
+	glog.Error(err)
 }

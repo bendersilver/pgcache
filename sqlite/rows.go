@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -128,9 +129,11 @@ func (r *Rows) next() (err error) {
 				}
 
 			case sqlite3.SQLITE_BLOB:
-				r.result[i], err = r.c.columnBlob(r.pstmt, i)
+				b, err := r.c.columnBlob(r.pstmt, i)
 				if err != nil {
 					return err
+				} else {
+					r.result[i] = json.RawMessage(b)
 				}
 
 			case sqlite3.SQLITE_NULL:

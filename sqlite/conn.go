@@ -503,9 +503,9 @@ type Conn struct {
 	beginMode       string
 }
 
-func newConn() (*Conn, error) {
-	c := &Conn{tls: libc.NewTLS()}
-	db, err := c.openV2(
+func newConn() (c *Conn, err error) {
+	c = &Conn{tls: libc.NewTLS()}
+	c.db, err = c.openV2(
 		"file:redispg?mode=memory",
 		sqlite3.SQLITE_OPEN_READWRITE|
 			sqlite3.SQLITE_OPEN_CREATE|
@@ -517,8 +517,6 @@ func newConn() (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	c.db = db
 	if err = c.extendedResultCodes(true); err != nil {
 		c.Close()
 		return nil, err

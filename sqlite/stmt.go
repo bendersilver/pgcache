@@ -34,6 +34,8 @@ func (s *Stmt) Close() (err error) {
 
 // Exec -
 func (s *Stmt) Exec(args ...driver.Value) error {
+	s.c.Lock()
+	defer s.c.Unlock()
 	return s.exec(toNamedValues(args...))
 }
 
@@ -103,6 +105,8 @@ func (s *Stmt) NumInput() (n int) {
 
 // Query -
 func (s *Stmt) Query(args ...driver.Value) (*Rows, error) {
+	s.c.Lock()
+	defer s.c.Unlock()
 	return s.query(toNamedValues(args...))
 }
 
