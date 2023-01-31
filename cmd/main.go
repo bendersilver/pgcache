@@ -106,7 +106,3 @@ func main() {
 
 	glog.Error(err)
 }
-
-func init() {
-
-}
