@@ -112,7 +112,7 @@ func (c *Conn) copyTable(conn *pgconn.PgConn, t *relTable, sql string) error {
 	res, err := conn.Exec(ctx, fmt.Sprintf(`
 		SELECT pa.attrelid, pa.attname, pa.atttypid, pa.attnum, COALESCE(pi.indisprimary, FALSE)
 		FROM pg_attribute pa
-		LEFT JOIN pg_index pi ON pa.attrelid = pi.indrelid AND pa.attnum = ANY(pi.indkey)
+		LEFT JOIN pg_index pi ON pa.attrelid = pi.indrelid AND pa.attnum = ANY(pi.indkey) AND pi.indisprimary IS TRUE
 		WHERE pa.attrelid = '%s'::regclass
 			AND pa.attnum > 0
 			AND NOT pa.attisdropped
@@ -170,7 +170,9 @@ func (c *Conn) copyTable(conn *pgconn.PgConn, t *relTable, sql string) error {
 	if pk == nil {
 		return fmt.Errorf("table `%s` pass. Missing primary key", t.pgName)
 	}
-
+	glog.Notice(fmt.Sprintf(
+		"CREATE TABLE %s (\n%s\n,PRIMARY KEY (%s)\n);",
+		t.sqliteName, strings.Join(cols, ",\n"), strings.Join(pk, ",")))
 	err = c.db.Exec(fmt.Sprintf(
 		"CREATE TABLE %s (\n%s\n,PRIMARY KEY (%s)\n);",
 		t.sqliteName, strings.Join(cols, ",\n"), strings.Join(pk, ",")))
