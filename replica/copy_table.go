@@ -170,9 +170,7 @@ func (c *Conn) copyTable(conn *pgconn.PgConn, t *relTable, sql string) error {
 	if pk == nil {
 		return fmt.Errorf("table `%s` pass. Missing primary key", t.pgName)
 	}
-	glog.Notice(fmt.Sprintf(
-		"CREATE TABLE %s (\n%s\n,PRIMARY KEY (%s)\n);",
-		t.sqliteName, strings.Join(cols, ",\n"), strings.Join(pk, ",")))
+
 	err = c.db.Exec(fmt.Sprintf(
 		"CREATE TABLE %s (\n%s\n,PRIMARY KEY (%s)\n);",
 		t.sqliteName, strings.Join(cols, ",\n"), strings.Join(pk, ",")))

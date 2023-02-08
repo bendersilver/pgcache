@@ -13,6 +13,7 @@ type Rows struct {
 	allocs  []uintptr
 	c       *Conn
 	columns []string
+	colType []string
 	pstmt   uintptr
 
 	doStep bool
@@ -37,10 +38,12 @@ func newRows(c *Conn, pstmt uintptr, allocs []uintptr, empty bool) (r *Rows, err
 	}
 
 	r.columns = make([]string, n)
+	r.colType = make([]string, n)
 	for i := range r.columns {
 		if r.columns[i], err = r.c.columnName(pstmt, i); err != nil {
 			return nil, err
 		}
+		r.colType[i] = r.c.columnDeclType(pstmt, i)
 	}
 	return r, nil
 }
@@ -57,6 +60,11 @@ func (r *Rows) Close() (err error) {
 // Columns -
 func (r *Rows) Columns() (c []string) {
 	return r.columns
+}
+
+// ColumnsType -
+func (r *Rows) ColumnsType() (c []string) {
+	return r.colType
 }
 
 // Values -
@@ -132,9 +140,8 @@ func (r *Rows) next() (err error) {
 				b, err := r.c.columnBlob(r.pstmt, i)
 				if err != nil {
 					return err
-				} else {
-					r.result[i] = json.RawMessage(b)
 				}
+				r.result[i] = json.RawMessage(b)
 
 			case sqlite3.SQLITE_NULL:
 				r.result[i] = nil

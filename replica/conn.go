@@ -26,7 +26,7 @@ type Options struct {
 
 // Conn -
 type Conn struct {
-	ErrCH chan error
+	// ErrCH chan error
 	db    *sqlite.Conn
 	dbURL string
 
@@ -56,7 +56,7 @@ func NewConn(opt *Options) (*Conn, error) {
 	u.RawQuery = param.Encode()
 
 	var c Conn
-	c.ErrCH = make(chan error, 0)
+	// c.ErrCH = make(chan error, 0)
 	c.relations = make(map[uint32]*relTable)
 	c.opt = opt
 	c.conn, err = pgconn.Connect(ctx, u.String())
@@ -85,9 +85,14 @@ func NewConn(opt *Options) (*Conn, error) {
 	}
 
 	go c.cleaner()
-	go c.run()
+	// go c.run()
 
 	return &c, nil
+}
+
+// Run -
+func (c *Conn) Run() error {
+	return c.run()
 }
 
 func (c *Conn) cleaner() {

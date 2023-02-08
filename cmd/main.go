@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql/driver"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -9,100 +8,57 @@ import (
 	"runtime"
 
 	"github.com/bendersilver/glog"
+	"github.com/bendersilver/pgcache/cli"
 	"github.com/bendersilver/pgcache/replica"
 	"github.com/bendersilver/pgcache/sqlite"
-	"github.com/joho/godotenv"
 )
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	os.RemoveAll(os.Getenv("PGC_SOCK"))
 
-	godotenv.Load()
-	if err := os.RemoveAll(os.Getenv("SOCK")); err != nil {
-		glog.Fatal(err)
-	}
-
-	c, err := replica.NewConn(&replica.Options{
+	rc, err := replica.NewConn(&replica.Options{
 		PgURL:     os.Getenv("PG_URL"),
 		SlotName:  os.Getenv("SLOT"),
 		TableName: os.Getenv("TABLE"),
 	})
-
 	if err != nil {
 		glog.Fatal(err)
 	}
 
-	var s http.Server
+	defer rc.Close()
 
 	db, err := sqlite.NewConn()
 	if err != nil {
-		glog.Fatal(err)
+		rc.Close()
+		return
 	}
-	s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Sql  string
-			Args []driver.Value
-		}
-		err := json.NewDecoder(r.Body).Decode(&body)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]any{
-				"status": 500,
-				"error":  err.Error(),
-			})
-			return
-		}
+	defer db.Close()
 
-		rows, err := db.Query(body.Sql, body.Args...)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]any{
-				"status": 500,
-				"error":  err.Error(),
-			})
-			return
-		}
-		defer rows.Close()
-
-		var response struct {
-			ColumnName []string
-			Result     [][]any
-		}
-		response.ColumnName = rows.Columns()
-
-		for rows.Next() {
-			vals, err := rows.Values()
+	svr := http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rsp, err := cli.SvrJSON(r, db)
 			if err != nil {
-				break
+				rsp = &cli.Response{
+					Error:  err,
+					Status: 500,
+				}
 			}
-			response.Result = append(response.Result, vals)
-		}
-		if rows.Err() != nil {
-			json.NewEncoder(w).Encode(map[string]any{
-				"status": 500,
-				"error":  err.Error(),
-			})
-		} else {
-			json.NewEncoder(w).Encode(&response)
-		}
-	})
+			json.NewEncoder(w).Encode(rsp)
+		}),
+	}
 
-	var sError = make(chan error)
+	var e chan error
 	go func() {
-		os.RemoveAll(os.Getenv("SOCK"))
-		ux, err := net.Listen("unix", os.Getenv("SOCK"))
+		ux, err := net.Listen("unix", os.Getenv("PGC_SOCK"))
 		if err != nil {
-			glog.Fatal(err)
+			e <- err
 		}
-		sError <- s.Serve(ux)
+		e <- svr.Serve(ux)
 	}()
 
-	select {
-	case err = <-c.ErrCH:
-		s.Close()
-	case err = <-sError:
-		c.Close()
-		// glog.Error(e)
-	}
-	// c.ErrCH
-
-	glog.Error(err)
+	go func() {
+		e <- rc.Run()
+	}()
+	glog.Error(<-e)
 }
